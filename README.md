@@ -486,7 +486,7 @@ LangSmith 集成，实时追踪：
 
 > **模型标识格式**：`provider/model`，例如 `claude/claude-3-5-sonnet-20241022`、`deepseek-chat`（DeepSeek 可省略前缀）。Key 仅存储在服务器内存中，服务重启后会恢复为 `.env` 中的值。
 
-### 功能截图
+### 功能截图---下面为乱序（后面改）
 
 #### 首页仪表盘
 ![首页仪表盘](Demophoto/5a5db5d343c9c2a06bb5eb4d7c3a42e9.png)
