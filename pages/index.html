@@ -973,11 +973,31 @@ function updateToolCardResult(name, result) {
 function updateToolbarStat(state) {
   var ind = document.getElementById('stat-indicator');
   var txt = document.getElementById('stat-text');
+  var stopBtn = document.getElementById('chat-stop-btn');
   if (!ind || !txt) return;
   ind.className = 'toolbar-stat ' + state;
-  if (state === 'busy') txt.textContent = '思考中...';
-  else if (state === 'error') txt.textContent = '连接失败';
-  else txt.textContent = '空闲';
+  if (state === 'busy') {
+    txt.textContent = '思考中...';
+    if (stopBtn) stopBtn.style.display = '';
+  } else {
+    if (stopBtn) stopBtn.style.display = 'none';
+    if (state === 'error') txt.textContent = '连接失败';
+    else txt.textContent = '空闲';
+  }
+}
+
+/* ── 中断生成 ──────────────────────────────────────────── */
+function chatStop() {
+  if (!_streamController) return;
+  _streamController.abort();
+  _streamController = null;
+  G.busy = false;
+  var btn = document.getElementById('chat-send-btn');
+  if (btn) btn.disabled = false;
+  updateToolbarStat('idle');
+  closeTaskBlock();
+  updateToolPanelHeader();
+  toast('已中断');
 }
 
 function updateMsgCount() {

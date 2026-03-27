@@ -126,7 +126,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
             rid = ev.get("run_id")
             return str(rid) if rid else ""
 
-        # #region agent log
+        # #region agent log (old session)
         import datetime as _dt, json as _json
         def _log_ev(hid, msg, data):
             line = _json.dumps({
@@ -140,6 +140,19 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
             }, ensure_ascii=False)
             with open(r"D:\Aprogress\Langchain\debug-5df370.log", "a", encoding="utf-8") as _f:
                 _f.write(line + "\n")
+            # Also log to current session
+            line2 = _json.dumps({
+                "sessionId": "4eeec4",
+                "id": f"log_{_dt.datetime.now().timestamp():.0f}_{_dt.datetime.now().microsecond}",
+                "timestamp": int(_dt.datetime.now().timestamp() * 1000),
+                "location": "api.py:chat_stream",
+                "message": msg,
+                "data": data,
+                "runId": "debug",
+                "hypothesisId": hid,
+            }, ensure_ascii=False)
+            with open(r"D:\Aprogress\Langchain\debug-4eeec4.log", "a", encoding="utf-8") as _f2:
+                _f2.write(line2 + "\n")
         # #endregion
 
         try:
@@ -183,10 +196,12 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         if content.strip().startswith("Human:"):
                             cur_turn += 1
                             cur_step = 0
+                            _log_ev("H1", "TURN_INCREMENT", {"cur_turn": cur_turn, "content_preview": content[:60]})
                         skip = (
                             content.strip() in ("Tool", "Tool/use", "Invoking tool:", "=" * 20) or
                             content.strip().startswith("=") and len(content.strip()) < 5
                         )
+                        _log_ev("H1", "STREAM_TOKEN", {"skip": skip, "cur_turn": cur_turn, "cur_step": cur_step, "content_len": len(content)})
                         if not skip:
                             yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
@@ -202,6 +217,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input, 'result': ''})}\n\n"
                     # 持久化到 DB
                     cur_step += 1
+                    _log_ev("H1", "SAVE_TOOL_START", {"thread_id": thread_id, "cur_turn": cur_turn, "cur_step": cur_step, "tool_name": tool_name})
                     await asyncio.to_thread(
                         save_tool_event,
                         thread_id, cur_turn, cur_step, 1,
@@ -224,6 +240,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         seen_tool_ends.add(dedup_key)
                         yield f"data: {json.dumps({'type': 'tool_result', 'name': tool_name, 'result': tool_result})}\n\n"
                     # 持久化到 DB（seq=2 表示结果）
+                    _log_ev("H1", "SAVE_TOOL_RESULT", {"thread_id": thread_id, "cur_turn": cur_turn, "cur_step": cur_step, "tool_name": tool_name, "result_len": len(tool_result)})
                     await asyncio.to_thread(
                         save_tool_event,
                         thread_id, cur_turn, cur_step, 2,
