@@ -1,6 +1,6 @@
 # LangChain RAG 记忆智能体
 
-> 基于 LangGraph + ChromaDB + SQLite + DeepSeek，实现具备主动记忆 Upsert 的 AI 智能体。
+> 基于 LangGraph + ChromaDB + SQLite + DeepSeek，实现具备主动记忆 Upsert 的 AI 智能体系统，支持多智能体编排、Web UI 和任务调度。
 
 ---
 
@@ -13,7 +13,8 @@
 - [运行项目](#运行项目)
 - [项目结构](#项目结构)
 - [核心模块说明](#核心模块说明)
-- [使用说明](#使用说明)
+- [Web UI 界面](#web-ui-界面)
+- [API 接口](#api-接口)
 - [常见问题](#常见问题)
 
 ---
@@ -62,8 +63,8 @@ playwright install chromium
 copy .env.example .env
 # 编辑 .env 文件，填入你的 DeepSeek API Key
 
-# 7. 运行
-python src/main.py
+# 7. 运行 Web 服务
+python run.py
 ```
 
 ---
@@ -195,16 +196,17 @@ CHECKPOINT_PATH=./data/checkpointer/checkpoints.db
 
 ## 运行项目
 
-### 基本运行
+### Web 服务模式（推荐）
 
 ```bash
-python src/main.py
+python run.py
 ```
 
-### 带 LangSmith 追踪运行
+启动后访问 `http://localhost:8000`
+
+### 命令行模式
 
 ```bash
-# 确保 .env 中配置了 LANGSMITH_API_KEY
 python src/main.py
 ```
 
@@ -231,60 +233,95 @@ D:\Aprogress\Langchain\
 ├── src/                         # 项目源代码
 │   ├── __init__.py
 │   ├── config.py                # 全局配置管理
-│   ├── main.py                  # 主入口脚本
+│   ├── main.py                  # 命令行主入口
+│   ├── document_processor.py    # 文档处理模块
 │   │
 │   ├── llm/                     # LLM 客户端
 │   │   ├── __init__.py
-│   │   └── deepseek_client.py   # DeepSeek API 调用封装
+│   │   └── deepseek_client.py  # DeepSeek API 调用封装
 │   │
 │   ├── tools/                   # 工具定义
 │   │   ├── __init__.py
 │   │   ├── browser_tools.py     # 浏览器搜索工具（Tavily）
-│   │   ├── calc_tools.py        # 计算器工具
-│   │   ├── memory_tools.py      # 记忆存储/检索工具
-│   │   └── multimodal_tools.py  # 多模态处理工具
+│   │   ├── calc_tools.py       # 计算器工具
+│   │   ├── memory_tools.py     # 记忆存储/检索工具
+│   │   └── multimodal_tools.py # 多模态处理工具
 │   │
 │   ├── graph/                   # LangGraph 状态机
 │   │   ├── __init__.py
-│   │   ├── agent_graph.py       # Agent 图构建
-│   │   ├── nodes.py             # 图节点定义
-│   │   ├── prompt.py            # Prompt 模板
-│   │   ├── router.py            # 路由逻辑
-│   │   └── state.py             # 状态定义
+│   │   ├── agent_graph.py      # Agent 图构建
+│   │   ├── orchestrator.py     # 多任务编排器
+│   │   ├── self_healer.py      # 自愈修复机制
+│   │   ├── conflict_resolver.py # 冲突解决器
+│   │   ├── nodes.py            # 图节点定义
+│   │   ├── prompt.py           # Prompt 模板
+│   │   ├── router.py           # 路由逻辑
+│   │   └── state.py            # 状态定义
+│   │   └── workers/            # 专用 Worker
+│   │       ├── coder_worker.py  # 编码任务 Worker
+│   │       ├── rag_worker.py    # RAG 任务 Worker
+│   │       └── search_worker.py # 搜索任务 Worker
+│   │
+│   ├── multi_agent/             # 多智能体系统
+│   │   ├── __init__.py
+│   │   └── orchestrator.py     # 多智能体编排器
 │   │
 │   ├── memory/                  # 记忆系统
 │   │   ├── __init__.py
-│   │   ├── chroma_store.py      # ChromaDB 长期记忆
-│   │   ├── memory_schema.py     # 记忆数据模型
-│   │   └── sqlite_store.py      # SQLite 状态持久化
+│   │   ├── chroma_store.py     # ChromaDB 长期记忆
+│   │   ├── memory_schema.py    # 记忆数据模型
+│   │   └── sqlite_store.py     # SQLite 状态持久化
 │   │
 │   ├── middleware/              # 中间件
 │   │   ├── __init__.py
-│   │   ├── input_guard.py       # 输入验证
-│   │   └── pii_redactor.py       # PII 脱敏处理
+│   │   ├── input_guard.py      # 输入验证
+│   │   └── pii_redactor.py     # PII 脱敏处理
 │   │
-│   ├── supervision/             # 监控集成
+│   ├── server/                  # Web API 服务
 │   │   ├── __init__.py
-│   │   └── langsmith_client.py  # LangSmith 追踪
+│   │   ├── main_server.py      # FastAPI 主服务
+│   │   ├── api.py              # API 路由定义
+│   │   ├── models.py           # Pydantic 数据模型
+│   │   ├── dependencies.py     # 依赖注入
+│   │   ├── orch_jobs.py        # 编排任务管理
+│   │   └── task_scheduler.py   # 任务调度器
 │   │
-│   └── utils/                    # 工具函数
+│   ├── supervision/            # 监控集成
+│   │   ├── __init__.py
+│   │   └── langsmith_client.py # LangSmith 追踪
+│   │
+│   └── utils/                   # 工具函数
 │       ├── __init__.py
-│       ├── markdown_cleaner.py  # Markdown 清洗
-│       ├── summarizer.py         # 内容摘要
-│       └── token_tracker.py     # Token 用量追踪
+│       ├── debug_ndjson.py      # NDJSON 调试工具
+│       ├── markdown_cleaner.py # Markdown 清洗
+│       ├── summarizer.py       # 内容摘要
+│       └── token_tracker.py    # Token 用量追踪
+│
+├── pages/                        # Web UI 页面
+│   ├── index.html              # 首页/仪表盘
+│   ├── agents.html             # 智能体管理
+│   ├── tasks.html              # 任务管理
+│   ├── sessions.html           # 会话历史
+│   ├── kb.html                 # 知识库管理
+│   ├── orchestrate.html         # 任务编排
+│   ├── settings.html           # 系统设置
+│   └── costs.html              # 成本统计
 │
 ├── tests/                        # 测试目录
+│   ├── test_agent.py
+│   ├── test_llm_client.py
 │   ├── test_memory.py
-│   ├── test_tools.py
-│   └── test_graph.py
+│   └── test_tools.py
 │
 ├── data/                         # 数据存储（运行时生成）
-│   ├── chroma_db/               # ChromaDB 向量数据库
-│   └── checkpointer/            # SQLite 检查点
+│   ├── chroma_db/              # ChromaDB 向量数据库
+│   ├── checkpointer/           # SQLite 检查点
+│   └── documents/              # 文档存储
 │
+├── run.py                        # Web 服务入口
 ├── .env.example                  # 环境变量示例
-├── requirements.txt             # Python 依赖
-└── README.md                    # 项目文档
+├── requirements.txt            # Python 依赖
+└── README.md                   # 项目文档
 ```
 
 ---
@@ -318,20 +355,50 @@ LangGraph 状态机核心：
 - **router.py** — 根据状态决定下一步流向
 - **prompt.py** — 动态 Prompt 构建，支持上下文注入
 - **agent_graph.py** — 将节点和边组装成完整图
+- **orchestrator.py** — 多任务编排，协调多个 Worker
+- **self_healer.py** — 自愈修复机制，自动检测并修复错误
+- **conflict_resolver.py** — 冲突解决器，处理并发任务冲突
 
-### 4. 记忆模块 (`src/memory/`)
+### 4. Worker 系统 (`src/graph/workers/`)
+
+专用任务处理器：
+
+| Worker | 功能 |
+|--------|------|
+| `coder_worker` | 代码编写、调试和优化任务 |
+| `rag_worker` | RAG 检索和生成任务 |
+| `search_worker` | 网页搜索和信息提取任务 |
+
+### 5. 多智能体系统 (`src/multi_agent/`)
+
+- **orchestrator.py** — 多智能体协调器，支持并行/串行任务执行
+
+### 6. 记忆模块 (`src/memory/`)
 
 两层记忆系统：
 
 - **ChromaDB (长期记忆)** — 向量数据库，存储用户偏好、历史对话摘要
 - **SQLite (会话状态)** — Checkpointer，支持断电恢复和会话回溯
 
-### 5. 中间件模块 (`src/middleware/`)
+### 7. 中间件模块 (`src/middleware/`)
 
 - **input_guard.py** — 输入格式验证、危险内容拦截
 - **pii_redactor.py** — 自动脱敏姓名、身份证、电话、邮箱等 PII 信息
 
-### 6. 监控模块 (`src/supervision/`)
+### 8. 服务端模块 (`src/server/`)
+
+FastAPI Web 服务：
+
+| 文件 | 功能 |
+|------|------|
+| `main_server.py` | FastAPI 应用入口，静态文件服务 |
+| `api.py` | RESTful API 路由定义 |
+| `models.py` | Pydantic 请求/响应模型 |
+| `dependencies.py` | 依赖注入工具 |
+| `orch_jobs.py` | 编排任务状态管理 |
+| `task_scheduler.py` | 定时任务调度器 |
+
+### 9. 监控模块 (`src/supervision/`)
 
 LangSmith 集成，实时追踪：
 - Agent 执行链路
@@ -339,56 +406,53 @@ LangSmith 集成，实时追踪：
 - Token 消耗统计
 - 工具调用记录
 
-### 7. 工具函数 (`src/utils/`)
+### 10. 工具函数 (`src/utils/`)
 
-- **token_tracker.py** — Token 使用量追踪和成本报告
-- **summarizer.py** — 长文本摘要压缩
-- **markdown_cleaner.py** — 网页 Markdown 清洗
+| 工具 | 功能 |
+|------|------|
+| `token_tracker.py` | Token 使用量追踪和成本报告 |
+| `summarizer.py` | 长文本摘要压缩 |
+| `markdown_cleaner.py` | 网页 Markdown 清洗 |
+| `debug_ndjson.py` | NDJSON 日志调试工具 |
 
 ---
 
-## 使用说明
+## Web UI 界面
 
-### 交互命令
+启动 `python run.py` 后访问 `http://localhost:8000`
 
-启动后，在终端输入：
+### 页面说明
 
-| 命令 | 功能 |
-|------|------|
-| 直接输入问题 | 与 Agent 对话 |
-| `quit` / `exit` | 退出并打印 Token 报告 |
-| `reset` | 重置当前会话（新建 thread_id） |
-| `cost` | 打印 Token 使用量报告 |
-| `memory` | 查看所有长期记忆条目 |
+| 页面 | 路径 | 功能 |
+|------|------|------|
+| 首页仪表盘 | `/` | 系统概览、快速入口 |
+| 智能体管理 | `/agents` | 查看和管理 AI 智能体 |
+| 任务管理 | `/tasks` | 创建、监控、终止任务 |
+| 会话历史 | `/sessions` | 查看历史对话记录 |
+| 知识库 | `/kb` | 文档管理和 RAG 配置 |
+| 任务编排 | `/orchestrate` | 可视化编排多步骤任务 |
+| 系统设置 | `/settings` | API 密钥、模型参数配置 |
+| 成本统计 | `/costs` | Token 使用量和成本报告 |
 
-### 对话示例
+---
 
-```
-╔══════════════════════════════════════════════╗
-║   LangGraph RAG Agent — DeepSeek + ChromaDB  ║
-║   用户: 周暄                                  ║
-║   输入 'quit' 或 'exit' 退出                   ║
-║   输入 'reset' 重置当前会话                    ║
-║   输入 'cost' 查看 Token 成本报告              ║
-║   输入 'memory' 查看所有长期记忆               ║
-╚══════════════════════════════════════════════╝
+## API 接口
 
-Assistant: 你好！有什么我可以帮助你的吗？
+服务启动后可访问 `http://localhost:8000/docs` 查看完整的 Swagger API 文档。
 
-You: 你好，我叫周暄，我喜欢用 Rust 写高性能代码
-Assistant: 你好周暄！我记住你了。很高兴认识一位 Rust 开发者！
+### 主要接口
 
-You: memory
---- 长期记忆 (1 条) ---
-  [user_preference] 用户名为周暄，擅长 Rust 编程...
-
-You: quit
-Token 使用报告:
-  prompt_tokens:  3200
-  completion_tokens: 850
-  总花费估算: $0.0023
-再见！
-```
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| POST | `/api/chat` | 发送对话消息 |
+| POST | `/api/orchestrate` | 创建编排任务 |
+| GET | `/api/tasks` | 获取任务列表 |
+| GET | `/api/tasks/{id}` | 获取任务详情 |
+| DELETE | `/api/tasks/{id}` | 终止任务 |
+| GET | `/api/sessions` | 获取会话列表 |
+| GET | `/api/memory` | 获取记忆内容 |
+| POST | `/api/documents` | 上传文档 |
+| GET | `/api/stats` | 获取统计数据 |
 
 ---
 
@@ -436,7 +500,6 @@ python --version
 
 # 如果版本不对，切换环境
 conda activate langchain
-which python  # 确认路径
 ```
 
 ### Q5: LangSmith 追踪不生效
@@ -462,15 +525,25 @@ del /f data\checkpointer\checkpoints.db
 del /f data\chroma_db\*.sqlite 2>nul /s
 ```
 
+### Q7: 任务执行失败或卡住
+
+**解决**：
+1. 在任务管理页面查看错误详情
+2. 检查 API Key 配额是否充足
+3. 查看日志文件定位问题
+4. 使用自愈机制：`/api/tasks/{id}/retry`
+
 ---
 
-## 分阶段开发计划  OVO ZhouXuan
+## 开发计划
 
-| 阶段 | 时间 | 内容 |
+| 阶段 | 状态 | 内容 |
 |------|------|------|
-| Time 1-2 | 已完成 | DeepSeek 调用 + ReAct Agent 跑通 |
-| Time 3-4 | 已完成 | ChromaDB 记忆 + SQLite 持久化 + 上下文裁剪 |
-| Time 5-6 | 已完成 | 高级 LangGraph 编排 + 多模态 + LangSmith 监控 |
+| Phase 1 | ✅ 已完成 | DeepSeek 调用 + ReAct Agent 跑通 |
+| Phase 2 | ✅ 已完成 | ChromaDB 记忆 + SQLite 持久化 + 上下文裁剪 |
+| Phase 3 | ✅ 已完成 | 高级 LangGraph 编排 + 多模态 + LangSmith 监控 |
+| Phase 4 | ✅ 已完成 | 多智能体系统 + Web UI + 任务编排 |
+| Phase 5 | 🚧 进行中 | 性能优化 + 错误恢复增强 |
 
 ---
 
