@@ -748,54 +748,110 @@ async def delete_document(doc_id: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Crayfish 多 Agent 编排端点 (SSE 流式)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-import json as _json
+#  Crayfish 多 Agent 编排端点 — 后台任务模式
+#  POST /orchestrate        → 创建任务，立即返回 job_id
+#  GET  /orchestrate/jobs   → 列表
+#  GET  /orchestrate/jobs/{id}             → 状态 + 结果
+#  GET  /orchestrate/jobs/{id}/events      → SSE 实时事件流
+#  DELETE /orchestrate/jobs/{id}            → 取消任务
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 @router.post("/orchestrate")
-async def orchestrate(req: OrchestrateRequest) -> StreamingResponse:
+async def orchestrate(req: OrchestrateRequest) -> dict:
     """
-    任务编排端点 — SSE 流式推送每个节点的状态变化。
-
-    SSE 格式：
-        event: <type>
-        data: <json_payload>
-
-    其中 <json_payload> 包含 {type, data: {...}}（与 orchestrator._emit 格式一致）。
-
-    工作流程：
-    1. Supervisor 接收需求，生成 JSON Plan（最多 3 个子任务）
-    2. 并行/顺序分发任务给 Search Worker / RAG Worker / Coder Worker
-    3. SSE 流式推送每个节点的状态变化
-    4. 最终汇总结果并推送 final_result
+    创建后台编排任务，立即返回 job_id。
+    实际编排在后台 asyncio.Task 中运行。
     """
+    from src.server.orch_jobs import get_job_manager, _run_orchestrator_job
+
+    job_mgr = get_job_manager()
+    job = job_mgr.create_job(
+        requirement=req.requirement,
+        enabled_agents=req.enabled_agents,
+        quality_threshold=req.quality_threshold,
+    )
+
+    # 立即返回 job_id，不阻塞
+    asyncio.create_task(_run_orchestrator_job(job))
+
+    logger.info(f"[orch_jobs] created job {job.job_id}: {req.requirement[:60]}...")
+    return {
+        "job_id": job.job_id,
+        "status": job.status.value,
+        "created_at": job.created_at,
+    }
+
+
+@router.get("/orchestrate/jobs")
+async def list_orch_jobs() -> dict:
+    """列出所有编排任务（最新在前，最多 50 条）。"""
+    from src.server.orch_jobs import get_job_manager
+
+    jobs = get_job_manager().list_jobs()
+    jobs.sort(key=lambda j: j.created_at, reverse=True)
+    return {
+        "jobs": [j.to_dict() for j in jobs[:50]],
+        "total": len(jobs),
+    }
+
+
+@router.get("/orchestrate/jobs/{job_id}")
+async def get_orch_job(job_id: str) -> dict:
+    """查询单个任务的状态 + 结果。"""
+    from src.server.orch_jobs import get_job_manager, JobStatus
+
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    resp = job.to_dict()
+    if job.status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED):
+        resp["events"] = [dict(e) for e in job.events]
+    return resp
+
+
+@router.get("/orchestrate/jobs/{job_id}/events")
+async def stream_orch_job_events(job_id: str) -> StreamingResponse:
+    """
+    SSE 流式推送任务的历史事件 + 新事件（long-polling 轮询，每 0.5s 检查一次）。
+    前端保持此连接即可持续接收实时更新。
+    """
+    from src.server.orch_jobs import get_job_manager, JobStatus
+
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        # 进度回调：将每个 orchestrator 事件转为标准的 SSE 行
-        async def collector(event: dict) -> None:
-            ev_type = event.get("type", "message")
-            payload = _json.dumps(event, ensure_ascii=False)
-            yield f"event: {ev_type}\ndata: {payload}\n\n"
+        import json as _j
 
-        try:
-            from src.graph.orchestrator import get_orchestrator
+        # 1. 推送已有历史事件（让新连接的客户端不漏掉之前的事件）
+        for ev in job.events:
+            payload = _j.dumps(dict(ev), ensure_ascii=False)
+            yield f"event: {ev['type']}\ndata: {payload}\n\n"
 
-            orchestrator = get_orchestrator()
-            # orchestrator.orchestrate 是 async def，需要 await
-            # 它内部用 for await _emit(collector, e) 消费事件
-            await orchestrator.orchestrate(
-                requirement=req.requirement,
-                enabled_agents=req.enabled_agents,
-                quality_threshold=req.quality_threshold,
-                progress_callback=collector,
-            )
+        # 2. 如果任务还在跑，继续推送新事件（long-polling 轮询）
+        if job.status not in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED):
+            last_idx = len(job.events)
+            waited = 0
+            max_wait = 300  # 最多等 5 分钟无活动后断开
 
-        except Exception as e:
-            logger.error(f"[orchestrate] orchestration error: {e}", exc_info=True)
-            err_payload = _json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
-            yield f"event: error\ndata: {err_payload}\n\n"
+            while job.status not in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED):
+                if waited >= max_wait:
+                    yield f"event: error\ndata: {_j.dumps({'type': 'error', 'message': 'SSE 连接超时（5分钟无活动）'}, ensure_ascii=False)}\n\n"
+                    break
+                await asyncio.sleep(0.5)
+                waited += 0.5
+                if len(job.events) > last_idx:
+                    waited = 0
+                    for ev in list(job.events)[last_idx:]:
+                        last_idx = len(job.events)
+                        payload = _j.dumps(dict(ev), ensure_ascii=False)
+                        yield f"event: {ev['type']}\ndata: {payload}\n\n"
 
-        yield f"event: done\ndata: {{\"type\": \"done\"}}\n\n"
+        # 3. 最终状态
+        yield f"event: done\ndata: {_j.dumps({{'type': 'done', 'status': job.status.value}}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -805,3 +861,20 @@ async def orchestrate(req: OrchestrateRequest) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.delete("/orchestrate/jobs/{job_id}")
+async def cancel_orch_job(job_id: str) -> dict:
+    """取消正在运行的后台编排任务。"""
+    from src.server.orch_jobs import get_job_manager, JobStatus
+
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status in (JobStatus.DONE, JobStatus.CANCELLED, JobStatus.FAILED):
+        raise HTTPException(status_code=409, detail=f"Job already {job.status.value}")
+
+    ok = get_job_manager().cancel_job(job_id)
+    return {"job_id": job_id, "status": job.status.value, "cancelled": ok}
+
