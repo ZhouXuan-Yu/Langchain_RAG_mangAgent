@@ -486,6 +486,48 @@ LangSmith 集成，实时追踪：
 
 > **模型标识格式**：`provider/model`，例如 `claude/claude-3-5-sonnet-20241022`、`deepseek-chat`（DeepSeek 可省略前缀）。Key 仅存储在服务器内存中，服务重启后会恢复为 `.env` 中的值。
 
+### 功能截图
+
+#### 首页仪表盘
+![首页仪表盘](Demophoto/5a5db5d343c9c2a06bb5eb4d7c3a42e9.png)
+系统概览、模型切换下拉框、快捷操作入口
+
+#### 设置页面 - 多模型配置
+![设置页面](Demophoto/040aa6d3f9a250f3bd896ae31d50d3d8.png)
+配置 DeepSeek、Claude、OpenAI、Gemini 等多模型 API Key
+
+#### 设置页面 - 工具配置
+![工具配置](Demophoto/0429682c74214cdc080080c984aa2fd9.png)
+配置 Tavily 搜索、Playwright 浏览器、ChromaDB 记忆等工具
+
+#### 会话历史 - 多会话管理
+![会话历史](Demophoto/09f9c31c8cee1541f0d60478717911a9.png)
+查看和管理历史对话记录，支持多会话并行
+
+#### 记忆系统 - ChromaDB 向量存储
+![记忆系统](Demophoto/919c4c977e37d37c7f29f11f23242344.png)
+ChromaDB 长期记忆存储，支持向量检索和语义相似度匹配
+
+#### 记忆系统 - SQLite 状态持久化
+![状态持久化](Demophoto/ff392f2a8f30afc7dfc9d35829067988.png)
+SQLite Checkpointer 支持断电恢复和会话回溯
+
+#### 任务管理 - 任务创建与监控
+![任务管理](Demophoto/b04943b5014ada196faf0c82e886f8c7.png)
+创建、监控、终止任务，支持实时状态更新
+
+#### 任务编排 - 多步骤编排
+![任务编排](Demophoto/23255ce7d76ae1fa5cfaf57c6f1ebde6.png)
+可视化编排多步骤任务流程
+
+#### 成本统计 - Token 使用追踪
+![成本统计](Demophoto/c749c42d0eb356c1cf668315613b69a6.png)
+Token 使用量和成本报告统计
+
+#### 知识库管理
+![知识库](Demophoto/0c9ecf43e3f6172d1b1f8e5c3ad67f9e.png)
+文档管理和 RAG 配置
+
 ---
 
 ## API 接口
