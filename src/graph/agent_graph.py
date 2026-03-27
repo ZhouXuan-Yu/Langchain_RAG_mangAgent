@@ -14,6 +14,9 @@ from src.graph.nodes import (
     memory_update_node,
     retrieve_web,
     browse_page_node,
+    retrieve_memory_async,
+    retrieve_web_async,
+    browse_page_node_async,
     image_process_node,
     reason_node,
     memory_reflect_node,
@@ -59,22 +62,23 @@ def build_agent_graph(
     Returns:
         编译后的 StateGraph
     """
-    # 注入 LLM 到 nodes 模块
-    set_llm(llm)
-
     # 定义所有工具
     tools = [memory_search, save_memory, web_search, browse_page, calculator, process_image]
     llm_with_tools = llm.bind_tools(tools)
+
+    # 注入 LLM 到 nodes 模块（传两个版本：裸 LLM + 带工具的 LLM）
+    set_llm(llm, llm_with_tools)
 
     # 构建图
     builder = StateGraph(AgentState)
 
     # ── 添加节点 ───────────────────────────────────────────────────────────
+    # 全部使用异步版本，确保 astream_events 能正确捕获工具调用事件
     builder.add_node("router", router_node)
-    builder.add_node("retrieve_memory", retrieve_memory)
+    builder.add_node("retrieve_memory", retrieve_memory_async)
     builder.add_node("memory_update", memory_update_node)
-    builder.add_node("retrieve_web", retrieve_web)
-    builder.add_node("browse_page", browse_page_node)
+    builder.add_node("retrieve_web", retrieve_web_async)
+    builder.add_node("browse_page", browse_page_node_async)
     builder.add_node("image_process", image_process_node)
     builder.add_node("reason_node", reason_node)
     builder.add_node("memory_reflect", memory_reflect_node)

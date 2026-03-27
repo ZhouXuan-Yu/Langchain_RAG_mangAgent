@@ -18,12 +18,15 @@ logger = logging.getLogger(__name__)
 
 # 全局 LLM 引用（在 build_agent_graph 时注入）
 _llm = None
+# 带工具绑定的 LLM（reason_node 使用这个才能实际调用工具）
+_llm_with_tools = None
 
 
-def set_llm(llm) -> None:
+def set_llm(llm, llm_with_tools=None) -> None:
     """注入 LLM 实例到 nodes 模块（避免循环导入）。"""
-    global _llm
+    global _llm, _llm_with_tools
     _llm = llm
+    _llm_with_tools = llm_with_tools or llm
 
 
 # ── Router Node ──────────────────────────────────────────────────────────────
@@ -83,21 +86,38 @@ def retrieve_memory(state: AgentState) -> dict:
         return {"memory_context": []}
 
     query = ""
-    if messages:
-        last_item = messages[-1]
-        if hasattr(last_item, "content"):
-            query = last_item.content if isinstance(last_item.content, str) else ""
-        elif isinstance(last_item, dict) and "content" in last_item:
-            query = last_item["content"] if isinstance(last_item["content"], str) else ""
+    last_item = messages[-1]
+    if hasattr(last_item, "content"):
+        query = last_item.content if isinstance(last_item.content, str) else ""
+    elif isinstance(last_item, dict) and "content" in last_item:
+        query = last_item["content"] if isinstance(last_item["content"], str) else ""
 
     try:
-        # 同步工具调用放入线程池，避免阻塞事件循环
-        result = asyncio.get_event_loop().run_until_complete(
-            memory_search.ainvoke({"query": query})
-        ) if asyncio.get_event_loop().is_running() else memory_search.invoke({"query": query})
+        result = memory_search.invoke({"query": query})
         return {"memory_context": [f"[记忆检索]\n{result}"]}
     except Exception as e:
         logger.error(f"retrieve_memory failed: {e}")
+        return {"memory_context": []}
+
+
+async def retrieve_memory_async(state: AgentState) -> dict:
+    """异步检索长期记忆节点（用于 astream_events）."""
+    messages = state.get("messages", [])
+    if not messages:
+        return {"memory_context": []}
+
+    query = ""
+    last_item = messages[-1]
+    if hasattr(last_item, "content"):
+        query = last_item.content if isinstance(last_item.content, str) else ""
+    elif isinstance(last_item, dict) and "content" in last_item:
+        query = last_item["content"] if isinstance(last_item["content"], str) else ""
+
+    try:
+        result = await asyncio.to_thread(memory_search.invoke, {"query": query})
+        return {"memory_context": [f"[记忆检索]\n{result}"]}
+    except Exception as e:
+        logger.error(f"retrieve_memory_async failed: {e}")
         return {"memory_context": []}
 
 
@@ -167,38 +187,52 @@ async def memory_update_node(state: AgentState) -> dict:
 # ── Web Search Nodes ────────────────────────────────────────────────────────
 
 def retrieve_web(state: AgentState) -> dict:
-    """网页检索节点 — 调用 web_search 工具."""
+    """网页检索节点 — 调用 web_search 工具（同步版本，用于 ainvoke 路径）。"""
     messages = state.get("messages", [])
     if not messages:
         return {"web_context": []}
 
     query = ""
-    if messages:
-        last_item = messages[-1]
-        if hasattr(last_item, "content"):
-            query = last_item.content if isinstance(last_item.content, str) else ""
-        elif isinstance(last_item, dict) and "content" in last_item:
-            query = last_item["content"] if isinstance(last_item["content"], str) else ""
+    last_item = messages[-1]
+    if hasattr(last_item, "content"):
+        query = last_item.content if isinstance(last_item.content, str) else ""
+    elif isinstance(last_item, dict) and "content" in last_item:
+        query = last_item["content"] if isinstance(last_item["content"], str) else ""
 
     try:
-        # 同步工具调用放入线程池
-        try:
-            loop = asyncio.get_running_loop()
-            result = loop.run_until_complete(web_search.ainvoke({"query": query}))
-        except RuntimeError:
-            result = web_search.invoke({"query": query})
+        result = web_search.invoke({"query": query})
         return {"web_context": [f"[网页搜索]\n{result}"]}
     except Exception as e:
         logger.error(f"retrieve_web failed: {e}")
         return {"web_context": []}
 
 
+async def retrieve_web_async(state: AgentState) -> dict:
+    """异步网页检索节点（用于 astream_events）。"""
+    messages = state.get("messages", [])
+    if not messages:
+        return {"web_context": []}
+
+    query = ""
+    last_item = messages[-1]
+    if hasattr(last_item, "content"):
+        query = last_item.content if isinstance(last_item.content, str) else ""
+    elif isinstance(last_item, dict) and "content" in last_item:
+        query = last_item["content"] if isinstance(last_item["content"], str) else ""
+
+    try:
+        result = await asyncio.to_thread(web_search.invoke, {"query": query})
+        return {"web_context": [f"[网页搜索]\n{result}"]}
+    except Exception as e:
+        logger.error(f"retrieve_web_async failed: {e}")
+        return {"web_context": []}
+
+
 def browse_page_node(state: AgentState) -> dict:
-    """深度抓取节点 — 当需要详细页面内容时调用 browse_page."""
+    """深度抓取节点（同步，用于 ainvoke 路径）。"""
     messages = state.get("messages", [])
     web_context = state.get("web_context", [])
 
-    # 从 web_context 中提取 URLs
     urls = []
     for ctx in web_context:
         for line in ctx.split("\n"):
@@ -208,9 +242,34 @@ def browse_page_node(state: AgentState) -> dict:
                         urls.append(part.strip(":,."))
 
     results = []
-    for url in urls[:2]:  # 最多抓取 2 个页面
+    for url in urls[:2]:
         try:
             content = browse_page.invoke({"url": url})
+            compressed = compress_web_content(content)
+            results.append(f"[页面抓取: {url}]\n{compressed}")
+        except Exception as e:
+            results.append(f"[页面抓取失败: {url}] {e}")
+
+    return {"web_context": results}
+
+
+async def browse_page_node_async(state: AgentState) -> dict:
+    """异步深度抓取节点（用于 astream_events）。"""
+    messages = state.get("messages", [])
+    web_context = state.get("web_context", [])
+
+    urls = []
+    for ctx in web_context:
+        for line in ctx.split("\n"):
+            if "http" in line and ("链接:" in line or "url:" in line):
+                for part in line.split():
+                    if part.startswith("http"):
+                        urls.append(part.strip(":,."))
+
+    results = []
+    for url in urls[:2]:
+        try:
+            content = await asyncio.to_thread(browse_page.invoke, {"url": url})
             compressed = compress_web_content(content)
             results.append(f"[页面抓取: {url}]\n{compressed}")
         except Exception as e:
@@ -293,21 +352,42 @@ async def reason_node(state: AgentState) -> dict:
     if not user_input:
         return {}
 
-    # LLM 推理（异步调用，不阻塞事件循环）
-    prompt = (
-        f"用户问题: {user_input}\n"
-        f"{context_hint}\n\n"
-        "请给出专业、直接的回答。如果发现了新的重要事实，"
-        "请在回答末尾以如下格式标注（用于自动记忆存储）：\n"
-        "MEMORY: <需要记忆的事实>\n"
-        "CATEGORY: <project|tech_stack|hardware|preference|decision>\n"
-        "IMPORTANCE: <1-5>"
-    )
+    # LLM 推理（使用绑定工具的 LLM，让模型决定是否调用工具）
+    # 传入对话历史上下文，让 LLM 完整理解当前对话状态
+    prompt = [
+        HumanMessage(content=(
+            "你是一个专业、高效的 AI 助手。请结合以下背景信息回答用户问题。\n\n"
+            + (context_hint or "（无额外背景信息）")
+        ))
+    ]
+    # 将历史对话加入上下文
+    for msg in messages:
+        if isinstance(msg, (HumanMessage, AIMessage)):
+            prompt.append(msg)
 
-    response = await _llm.ainvoke([HumanMessage(content=prompt)])
+    response = await _llm_with_tools.ainvoke(prompt)
     response_text = response.content if hasattr(response, "content") else str(response)
 
-    # 解析 pending_memory
+    # 检查 LLM 是否触发了工具调用（tool_calls 属性）
+    tool_calls_made = []
+    if hasattr(response, "tool_calls") and response.tool_calls:
+        for tc in response.tool_calls:
+            tool_name = tc.get("name", "unknown")
+            tool_args = tc.get("args", {})
+            tool_calls_made.append({
+                "name": tool_name,
+                "input": tool_args,
+            })
+        logger.info("[reason_node] LLM triggered tool calls: %s", [t["name"] for t in tool_calls_made])
+
+    # 检查 ToolMessage（LLM 调用工具后的工具返回结果）
+    tool_results = []
+    if hasattr(response, "tool_call_details") and response.tool_call_details:
+        for detail in response.tool_call_details:
+            if hasattr(detail, "msg"):
+                tool_results.append(detail.msg.content if hasattr(detail.msg, "content") else str(detail.msg))
+
+    # 解析 pending_memory（从 LLM 响应中提取自动记忆指令）
     pending = []
     lines = response_text.split("\n")
     for i, line in enumerate(lines):
@@ -332,8 +412,9 @@ async def reason_node(state: AgentState) -> dict:
                 ))
 
     return {
-        "messages": [AIMessage(content=response_text)],
+        "messages": [response],  # response 本身已包含 tool_calls 和 tool_call_details
         "pending_memory": pending,
+        "_tool_calls": tool_calls_made,  # 前端展示用（带下划线避免写入 state schema）
     }
 
 

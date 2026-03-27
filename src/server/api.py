@@ -17,6 +17,7 @@ from src.server.models import (
     AgentUpdateRequest,
     ChatRequest,
     ConfigInfo,
+    ConfigUpdateRequest,
     CostHistoryEntry,
     CostHistoryReport,
     CostReport,
@@ -25,6 +26,7 @@ from src.server.models import (
     DocumentUploadResponse,
     MemoryItem,
     MemorySaveRequest,
+    ModelConfigRequest,
     ModelSwitchRequest,
     SessionSummary,
     SessionUpdateRequest,
@@ -34,7 +36,14 @@ from src.server.models import (
     TaskListResponse,
     TaskUpdateRequest,
 )
-from src.server.dependencies import get_agent, switch_model, get_current_model, get_checkpointer
+from src.server.dependencies import (
+    get_agent,
+    switch_model,
+    get_current_model,
+    get_checkpointer,
+    _current_temperature,
+    _current_max_tokens,
+)
 from src.tools.memory_tools import get_memory_store
 from src.utils.token_tracker import TokenTracker
 from src.config import (
@@ -44,6 +53,7 @@ from src.config import (
     USER_NAME,
     USER_TECH_STACK,
     USER_HARDWARE,
+    MAX_CONTEXT_TOKENS,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,124 +75,70 @@ AVAILABLE_MODELS = [
 
 @router.post("/chat/stream")
 async def chat_stream(req: ChatRequest) -> StreamingResponse:
-    """SSE 流式对话 — 后台执行图逻辑，完成后推送结果."""
+    """SSE 流式对话 — 实时推送 token 和工具调用事件。"""
 
     async def event_generator() -> AsyncGenerator[str, None]:
         model = req.model or get_current_model()
         agent = await get_agent(model)
         config = {"configurable": {"thread_id": req.thread_id}}
 
+        seen_tool_events: set[str] = set()  # 去重
+
+        def dedup_tool(name: str, args_str: str) -> bool:
+            key = f"{name}:{args_str[:80]}"
+            if key in seen_tool_events:
+                return False
+            seen_tool_events.add(key)
+            return True
+
         try:
-            result = await agent.ainvoke(
+            # ── 使用 astream_events (version="v2") 捕获所有流式事件 ─────────────
+            # 每个事件: {"event": str, "run_id": str, "data": {...}, ...}
+            async for event in agent.astream_events(
                 {"messages": [HumanMessage(content=req.message)], "thread_id": req.thread_id},
                 config=config,
-            )
+                version="v2",
+            ):
+                ev_type = event.get("event", "")
 
-            messages = result.get("messages", []) if isinstance(result, dict) else []
+                # ── 工具调用开始 ────────────────────────────────────────────────
+                if ev_type == "on_tool_start":
+                    tool_name = event.get("name", "unknown")
+                    tool_input = event.get("data", {}).get("input", {})
+                    args_str = json.dumps(tool_input, ensure_ascii=False)
+                    if dedup_tool(tool_name, args_str):
+                        logger.info("[chat_stream] tool_start: %s", tool_name)
+                        yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input, 'result': ''})}\n\n"
 
-            # 提取工具调用记录
-            # 1. 从 memory_context 中提取（格式：[记忆检索]\n... 或 [网页搜索]\n...）
-            # 2. 从 ToolMessage 中提取（如果有）
-            # 3. 从 pending_memory 相关消息中提取
-            tool_calls = []
-            memory_context = result.get("memory_context", []) if isinstance(result, dict) else []
-            web_context = result.get("web_context", []) if isinstance(result, dict) else []
+                # ── 工具调用结束 ────────────────────────────────────────────────
+                elif ev_type == "on_tool_end":
+                    tool_name = event.get("name", "unknown")
+                    raw_output = event.get("data", {}).get("output", "")
+                    # output 可能是 str 或 dict
+                    if isinstance(raw_output, dict):
+                        tool_result = json.dumps(raw_output, ensure_ascii=False)
+                    else:
+                        tool_result = str(raw_output) if raw_output else ""
+                    args_str = json.dumps(event.get("data", {}).get("input", {}), ensure_ascii=False)
+                    if dedup_tool(tool_name, args_str):
+                        # 避免重复推送（on_tool_start 已推送过开头）
+                        yield f"data: {json.dumps({'type': 'tool_result', 'name': tool_name, 'result': tool_result})}\n\n"
 
-            # 从 memory_context 提取 memory_search
-            for ctx in memory_context:
-                if isinstance(ctx, str):
-                    if "[记忆检索]" in ctx or "memory_search" in ctx.lower():
-                        tool_calls.append({
-                            "name": "memory_search",
-                            "input": {"query": req.message},
-                            "result": ctx[:300]
-                        })
-                    elif "[记忆已更新]" in ctx or "save_memory" in ctx.lower():
-                        tool_calls.append({
-                            "name": "save_memory",
-                            "input": {"message": req.message},
-                            "result": ctx[:300]
-                        })
+                # ── LLM token 流 ───────────────────────────────────────────────
+                elif ev_type in ("on_chat_model_stream", "chat_model_stream"):
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        content = chunk.content
+                        # 过滤掉工具调用标记文本
+                        skip = (
+                            content.strip() in ("Tool", "Tool/use", "Invoking tool:", "=" * 20) or
+                            content.strip().startswith("=") and len(content.strip()) < 5
+                        )
+                        if not skip:
+                            yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
-            # 从 web_context 提取 web_search
-            for ctx in web_context:
-                if isinstance(ctx, str):
-                    if "[网页搜索]" in ctx or "web_search" in ctx.lower():
-                        # 提取查询（从上下文中推断）
-                        tool_calls.append({
-                            "name": "web_search",
-                            "input": {"query": req.message},
-                            "result": ctx[:300]
-                        })
-                    elif "[页面抓取" in ctx or "browse_page" in ctx.lower():
-                        tool_calls.append({
-                            "name": "browse_page",
-                            "input": {"context": ctx[:100]},
-                            "result": ctx[:300]
-                        })
-
-            # 从 ToolMessage 中提取（标准 LangChain 工具调用）
-            for msg in messages:
-                if hasattr(msg, "name") and msg.name in ["memory_search", "save_memory", "web_search", "browse_page", "calculator", "process_image"]:
-                    # 检查是否已存在相同的工具调用
-                    existing = any(tc.get("name") == msg.name and tc.get("result", "").startswith(str(getattr(msg, "content", ""))[:50]) for tc in tool_calls)
-                    if not existing:
-                        tool_calls.append({
-                            "name": msg.name,
-                            "input": getattr(msg, "input", {}) or {},
-                            "result": getattr(msg, "content", "")[:200] if hasattr(msg, "content") else ""
-                        })
-
-            # 从 pending_memory 提取（主动记忆）
-            pending = result.get("pending_memory", []) if isinstance(result, dict) else []
-            if pending and len(tool_calls) == 0:
-                # 有主动记忆说明触发了 save_memory
-                tool_calls.append({
-                    "name": "save_memory",
-                    "input": {"auto_save": True},
-                    "result": f"待存储 {len(pending)} 条记忆"
-                })
-
-            # 提取最终 AI 回复
-            final_text = ""
-            for msg in reversed(messages):
-                if hasattr(msg, "content") and hasattr(msg, "type"):
-                    if msg.type == "ai":
-                        final_text = msg.content or ""
-                        break
-                elif isinstance(msg, dict):
-                    if msg.get("type") == "ai" or msg.get("role") == "assistant":
-                        final_text = msg.get("content", "") or ""
-                        break
-
-            # 推送工具调用事件（按顺序）
-            for tc in tool_calls:
-                tool_name = tc.get("name", "unknown")
-                tool_input = tc.get("input", {})
-                if isinstance(tool_input, str):
-                    try:
-                        tool_input = json.loads(tool_input)
-                    except Exception:
-                        tool_input = {"raw": tool_input}
-                yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input, 'result': tc.get('result', '')})}\n\n"
-
-            # 推送 token（一次性全量，因为底层 LLM 是 non-streaming）
-            if final_text:
-                yield f"data: {json.dumps({'type': 'token', 'content': final_text})}\n\n"
-
-            # 推送完成信号
-            yield f"data: {json.dumps({'type': 'done', 'content': final_text})}\n\n"
-
-            # token 计数
-            try:
-                _token_tracker.record(
-                    prompt_tokens=0,
-                    completion_tokens=_token_tracker.count(final_text),
-                    model=model,
-                    label="chat_stream",
-                )
-            except Exception:
-                pass
+            # ── 推送完成信号 ─────────────────────────────────────────────────
+            yield f"data: {json.dumps({'type': 'done', 'content': ''})}\n\n"
 
         except Exception as e:
             logger.error(f"chat_stream error: {e}", exc_info=True)
@@ -334,15 +290,16 @@ async def update_session(thread_id: str, req: SessionUpdateRequest) -> dict:
 
 @router.get("/config", response_model=ConfigInfo)
 async def get_config() -> ConfigInfo:
-    """获取当前配置."""
+    """获取当前配置（包含运行时动态值）."""
     return ConfigInfo(
         available_models=AVAILABLE_MODELS,
         current_model=get_current_model(),
         user_name=USER_NAME,
         user_tech_stack=USER_TECH_STACK,
         user_hardware=USER_HARDWARE,
-        temperature=TEMPERATURE,
-        max_tokens=MAX_TOKENS,
+        temperature=_current_temperature,
+        max_tokens=_current_max_tokens,
+        max_context_tokens=MAX_CONTEXT_TOKENS,
     )
 
 
@@ -353,6 +310,64 @@ async def model_switch(req: ModelSwitchRequest) -> dict:
         raise HTTPException(status_code=400, detail=f"Unknown model: {req.model}")
     result = switch_model(req.model)
     return result
+
+
+@router.post("/config/model")
+async def update_model_config(req: ModelConfigRequest) -> dict:
+    """更新模型参数（temperature、max_tokens），不影响默认模型."""
+    if req.temperature is not None:
+        from src.server.dependencies import set_temperature
+        set_temperature(req.temperature)
+    if req.max_tokens is not None:
+        from src.server.dependencies import set_max_tokens
+        set_max_tokens(req.max_tokens)
+    logger.info(f"[config] model params updated: temp={req.temperature}, max_tokens={req.max_tokens}")
+    return {"status": "ok"}
+
+
+@router.post("/cost/reset")
+async def reset_cost() -> dict:
+    """重置 Token 统计计数器."""
+    global _token_tracker
+    _token_tracker = TokenTracker(model=get_current_model())
+    logger.info("[config] token stats reset")
+    return {"status": "ok"}
+
+
+@router.delete("/memory/all")
+async def delete_all_memory() -> dict:
+    """清空所有长期记忆（ChromaDB）."""
+    try:
+        store = get_memory_store()
+        store.clear()
+        logger.info("[config] all memories cleared")
+        return {"status": "ok", "message": "All memories cleared"}
+    except Exception as e:
+        logger.error(f"delete_all_memory error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/chroma/reset")
+async def reset_chroma() -> dict:
+    """重置整个向量数据库（删除所有集合，包括文档 chunks）."""
+    try:
+        from src.document_processor import get_document_store
+        import shutil
+        from src.config import CHROMA_PATH
+
+        # 清空 memory store
+        store = get_memory_store()
+        store.clear()
+
+        # 清空文档 store（重置目录）
+        doc_store = get_document_store()
+        doc_store.reset()
+
+        logger.info("[config] chroma vector DB reset")
+        return {"status": "ok", "message": "Vector database reset complete"}
+    except Exception as e:
+        logger.error(f"reset_chroma error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/cost", response_model=CostReport)
@@ -635,10 +650,12 @@ async def upload_document(
 ) -> DocumentUploadResponse:
     """上传文档：提取文本、分块、注入 ChromaDB."""
     from src.document_processor import (
-        get_document_store,
+        chunk_text,
         detect_doc_type,
         extract_text,
-        chunk_text,
+        get_document_store,
+        is_docx_zip_blob,
+        is_legacy_word_doc,
     )
 
     try:
@@ -647,6 +664,8 @@ async def upload_document(
         doc_type = detect_doc_type(filename)
         size = len(content)
 
+        logger.info(f"[upload] received file: {filename}, type: {doc_type}, size: {size} bytes")
+
         store = get_document_store()
         doc = store.save(filename=filename, doc_type=doc_type, size_bytes=size, content=content)
         doc_id = doc["id"]
@@ -654,12 +673,27 @@ async def upload_document(
 
         try:
             text = extract_text(content, doc_type)
+            logger.info(f"[upload] extracted text length: {len(text) if text else 0} chars")
             if not (text or "").strip():
+                err = "未能从文件中提取到文本（空文件、加密文档或缺少解析依赖）。"
+                if doc_type == "docx":
+                    if is_legacy_word_doc(content):
+                        err = (
+                            "该文件为旧版 Word 二进制格式（.doc），不是 .docx。"
+                            "请在 Word 或 WPS 中使用「另存为」选择「Word 文档 (*.docx)」后重新上传。"
+                        )
+                    elif not is_docx_zip_blob(content):
+                        err = (
+                            "文件内容不是有效的 Word 文档（.docx 应为 ZIP 压缩包），可能已损坏或扩展名错误。"
+                            "请重新导出为 .docx 后再试。"
+                        )
+                    else:
+                        err += " 若已安装依赖，可执行：pip install python-docx"
                 store.update_status(
                     doc_id,
                     "failed",
                     chunk_count=0,
-                    error="未能从文件中提取到文本（空文件、加密文档或缺少解析依赖）",
+                    error=err,
                 )
             else:
                 chunks = chunk_text(text)
@@ -667,7 +701,7 @@ async def upload_document(
                 store.ingest_to_chroma(doc_id)
             doc = store.get(doc_id)
         except Exception as e:
-            logger.error(f"[upload] processing error: {e}")
+            logger.error(f"[upload] processing error: {e}", exc_info=True)
             store.update_status(doc_id, "failed", error=str(e))
             doc = store.get(doc_id)
 
@@ -703,3 +737,70 @@ async def delete_document(doc_id: str) -> dict:
     if not ok:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"status": "ok"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Crayfish 多 Agent 编排端点 (SSE 流式)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from typing import Union
+
+
+@router.get("/orchestrate")
+async def orchestrate(
+    requirement: str,
+    enabled_agents: str = "[\"search\",\"rag\",\"coder\"]",
+    quality_threshold: float = 8.0,
+    thread_id: str = "orchestrate",
+) -> StreamingResponse:
+    """
+    任务编排端点 — SSE 流式推送每个节点的状态变化。
+
+    注意：EventSource (SSE) 只支持 GET 请求，参数通过 URL query string 传递。
+
+    工作流程：
+    1. Supervisor 接收需求，生成 JSON Plan（最多 3 个子任务）
+    2. 并行/顺序分发任务给 Search Worker / RAG Worker / Coder Worker
+    3. SSE 流式推送每个节点的状态变化（supervisor_plan, worker_start, worker_done, ...）
+    4. 最终汇总结果并推送 final_result
+    """
+    import json as _json
+
+    # 解析 enabled_agents JSON 字符串
+    try:
+        parsed_agents = _json.loads(enabled_agents)
+    except Exception:
+        parsed_agents = ["search", "rag", "coder"]
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        # 进度回调：每个 dict 事件转为 SSE data 块
+        async def emit(event: dict):
+            payload = _json.dumps(event, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+
+        try:
+            from src.graph.orchestrator import get_orchestrator
+
+            orchestrator = get_orchestrator()
+            await orchestrator.orchestrate(
+                requirement=requirement,
+                enabled_agents=parsed_agents,
+                quality_threshold=quality_threshold,
+                progress_callback=emit,
+            )
+
+        except Exception as e:
+            logger.error(f"[orchestrate] orchestration error: {e}", exc_info=True)
+            yield f"data: {_json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+        finally:
+            yield f"data: {_json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

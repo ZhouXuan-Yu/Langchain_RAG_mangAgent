@@ -20,57 +20,77 @@
 
 <div id="app">
   <header class="topbar" id="header"></header>
-  <div class="main-area">
-    <div class="noir-page">
-      <div class="noir-header">
-        <h1>成本报表</h1>
-        <p>// Token 消耗与成本统计</p>
-      </div>
-
-      <!-- 时间段切换 -->
-      <div class="period-tabs">
-        <button class="period-tab" data-days="7" onclick="setPeriod(7)">近 7 天</button>
-        <button class="period-tab active" data-days="30" onclick="setPeriod(30)">近 30 天</button>
-        <button class="period-tab" data-days="90" onclick="setPeriod(90)">近 90 天</button>
-      </div>
-
-      <!-- 统计概览 -->
-      <div class="cost-summary" id="cost-summary">
-        <div class="cost-stat-card"><div class="cost-stat-val" id="cost-total">--</div><div class="cost-stat-label">总 Token</div></div>
-        <div class="cost-stat-card"><div class="cost-stat-val accent" id="cost-cost">--</div><div class="cost-stat-label">预估费用 (USD)</div></div>
-        <div class="cost-stat-card"><div class="cost-stat-val" id="cost-calls">--</div><div class="cost-stat-label">API 调用次数</div></div>
-        <div class="cost-stat-card"><div class="cost-stat-val" id="cost-avg">--</div><div class="cost-stat-label">日均 Token</div></div>
-      </div>
-
-      <!-- 趋势图表 -->
-      <div class="cost-chart-wrap">
-        <div class="cost-chart-title">Token 使用趋势</div>
-        <canvas id="cost-chart" class="cost-chart-canvas"></canvas>
-      </div>
-
-      <!-- 明细表格 -->
-      <div class="noir-card" style="border-radius:8px;overflow:hidden">
-        <table class="cost-table">
-          <thead><tr><th>日期</th><th>模型</th><th>Prompt</th><th>Completion</th><th>总计</th><th>费用</th></tr></thead>
-          <tbody id="cost-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+  <div class="main-area" id="main-content"></div>
 </div>
 
 <script>
+// ── 成本页内容模板 ─────────────────────────────────────────────
+var COSTS_CONTENT = [
+  '<div class="noir-page">',
+    '<div class="noir-header">',
+      '<h1>成本报表</h1>',
+      '<p>// Token 消耗与成本统计</p>',
+    '</div>',
+    '<div class="period-tabs">',
+      '<button class="period-tab" data-days="7" onclick="setPeriod(7)">近 7 天</button>',
+      '<button class="period-tab" data-days="30" onclick="setPeriod(30)">近 30 天</button>',
+      '<button class="period-tab" data-days="90" onclick="setPeriod(90)">近 90 天</button>',
+    '</div>',
+    '<div class="cost-summary" id="cost-summary">',
+      '<div class="cost-stat-card"><div class="cost-stat-val" id="cost-total">--</div><div class="cost-stat-label">总 Token</div></div>',
+      '<div class="cost-stat-card"><div class="cost-stat-val accent" id="cost-cost">--</div><div class="cost-stat-label">预估费用 (USD)</div></div>',
+      '<div class="cost-stat-card"><div class="cost-stat-val" id="cost-calls">--</div><div class="cost-stat-label">API 调用次数</div></div>',
+      '<div class="cost-stat-card"><div class="cost-stat-val" id="cost-avg">--</div><div class="cost-stat-label">日均 Token</div></div>',
+    '</div>',
+    '<div class="cost-chart-wrap">',
+      '<div class="cost-chart-title">Token 使用趋势</div>',
+      '<canvas id="cost-chart" class="cost-chart-canvas"></canvas>',
+    '</div>',
+    '<div class="noir-card" style="border-radius:8px;overflow:hidden">',
+      '<table class="cost-table">',
+        '<thead><tr><th>日期</th><th>模型</th><th>Prompt</th><th>Completion</th><th>总计</th><th>费用</th></tr></thead>',
+        '<tbody id="cost-tbody"></tbody>',
+      '</table>',
+    '</div>',
+  '</div>'
+].join('');
+
+// ── 成本页 show ───────────────────────────────────────────────
+function costsOnShow(savedState) {
+  if (savedState && savedState.currentPeriod !== undefined) {
+    window._currentPeriod = savedState.currentPeriod;
+    setPeriodActive(window._currentPeriod);
+  }
+  loadCosts();
+}
+
+// ── 成本页 save ───────────────────────────────────────────────
+function costsOnSave() {
+  return { currentPeriod: window._currentPeriod };
+}
+
+// ── 注册 ─────────────────────────────────────────────────────
+registerSPA('/costs', COSTS_CONTENT, costsOnShow, costsOnSave);
+
+// ── 页面初始化 ────────────────────────────────────────────────
 injectStyles();
 initPage('/costs');
 
 var _currentPeriod = 30;
 
+initSPA('/costs');
+setPeriodActive(_currentPeriod);
+
 function setPeriod(days) {
-  _currentPeriod = days;
+  window._currentPeriod = days;
+  setPeriodActive(days);
+  loadCosts();
+}
+
+function setPeriodActive(days) {
   document.querySelectorAll('.period-tab').forEach(function(t) {
     t.classList.toggle('active', parseInt(t.getAttribute('data-days')) === days);
   });
-  loadCosts();
 }
 
 function loadCosts() {
@@ -82,18 +102,23 @@ function loadCosts() {
     var hist = results[1];
     if (!cur) return;
 
-    document.getElementById('cost-total').textContent = cur.total_tokens.toLocaleString();
-    document.getElementById('cost-cost').textContent = '$' + cur.total_cost_usd.toFixed(4);
-    document.getElementById('cost-calls').textContent = cur.num_calls.toLocaleString();
+    var el = document.getElementById('cost-total');
+    if (el) el.textContent = cur.total_tokens.toLocaleString();
+    el = document.getElementById('cost-cost');
+    if (el) el.textContent = '$' + cur.total_cost_usd.toFixed(4);
+    el = document.getElementById('cost-calls');
+    if (el) el.textContent = cur.num_calls.toLocaleString();
 
     var dailyAvg = hist && hist.entries && hist.entries.length
       ? Math.round(cur.total_tokens / hist.entries.length)
       : 0;
-    document.getElementById('cost-avg').textContent = dailyAvg.toLocaleString();
+    el = document.getElementById('cost-avg');
+    if (el) el.textContent = dailyAvg.toLocaleString();
 
     drawChart(hist ? hist.entries : []);
 
     var tbody = document.getElementById('cost-tbody');
+    if (!tbody) return;
     if (!hist || !hist.entries || !hist.entries.length) {
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#555;padding:30px;font-family:\'Courier Prime\',monospace">暂无数据</td></tr>';
       return;
@@ -113,6 +138,7 @@ function loadCosts() {
 
 function drawChart(entries) {
   var canvas = document.getElementById('cost-chart');
+  if (!canvas) return;
   var ctx = canvas.getContext('2d');
   var dpr = window.devicePixelRatio || 1;
   var rect = canvas.getBoundingClientRect();
@@ -134,7 +160,6 @@ function drawChart(entries) {
   var data = entries.slice(0, 30).reverse();
   var maxVal = Math.max.apply(null, data.map(function(e) { return e.total_tokens || 0; })) || 1;
 
-  // grid lines
   ctx.strokeStyle = '#2a2a2a';
   ctx.lineWidth = 1;
   for (var i = 0; i <= 4; i++) {
@@ -145,7 +170,6 @@ function drawChart(entries) {
     ctx.stroke();
   }
 
-  // area fill
   var grad = ctx.createLinearGradient(0, 0, 0, h);
   grad.addColorStop(0, 'rgba(139,0,0,0.3)');
   grad.addColorStop(1, 'rgba(139,0,0,0)');
@@ -162,7 +186,6 @@ function drawChart(entries) {
   ctx.closePath();
   ctx.fill();
 
-  // line
   ctx.strokeStyle = '#a00000';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -174,7 +197,6 @@ function drawChart(entries) {
   });
   ctx.stroke();
 
-  // dots
   ctx.fillStyle = '#a00000';
   data.forEach(function(e, i) {
     var x = (i / (data.length - 1)) * w;
@@ -185,7 +207,8 @@ function drawChart(entries) {
   });
 }
 
-loadCosts();
+// 暴露给 SPA polling
+window._costsLoad = loadCosts;
 </script>
 
 </body>

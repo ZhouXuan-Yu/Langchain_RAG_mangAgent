@@ -28,10 +28,28 @@ _agent_registry: dict[str, Any] = {}
 # ── 当前活动模型 ──────────────────────────────────────────────────────────────
 _current_model: str = DEFAULT_MODEL
 _current_temperature: float = TEMPERATURE
+_current_max_tokens: int = MAX_TOKENS
 
 # ── 全局异步 Checkpointer（跨模型共享）────────────────────────────────────────
 _async_checkpointer: Optional[BaseCheckpointSaver] = None
 _async_checkpointer_lock = asyncio.Lock()
+
+
+def set_temperature(temp: float) -> None:
+    """更新 temperature 参数，下次请求时生效."""
+    global _current_temperature
+    _current_temperature = float(temp)
+    # 清除 agent 缓存，使新 agent 使用新参数
+    _agent_registry.clear()
+    logger.info(f"[config] temperature set to {temp}")
+
+
+def set_max_tokens(max_tokens: int) -> None:
+    """更新 max_tokens 参数，下次请求时生效."""
+    global _current_max_tokens
+    _current_max_tokens = int(max_tokens)
+    _agent_registry.clear()
+    logger.info(f"[config] max_tokens set to {max_tokens}")
 
 
 async def _get_async_checkpointer() -> BaseCheckpointSaver:
@@ -56,7 +74,7 @@ async def get_agent(model: Optional[str] = None) -> Any:
         llm = init_deepseek_llm(
             model=key,
             temperature=_current_temperature,
-            max_tokens=MAX_TOKENS,
+            max_tokens=_current_max_tokens,
             streaming=True,
         )
         checkpointer = await _get_async_checkpointer()

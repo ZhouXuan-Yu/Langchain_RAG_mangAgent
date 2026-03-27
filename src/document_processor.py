@@ -5,8 +5,11 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 import sqlite3
 import uuid
+import zipfile
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -105,6 +108,8 @@ EXT_TO_TYPE = {
     ".xml": "code",
     ".html": "code",
     ".css": "code",
+    ".xlsx": "excel",
+    ".xls": "excel",
     ".png": "image",
     ".jpg": "image",
     ".jpeg": "image",
@@ -125,6 +130,20 @@ ALLOWED_TYPES = set(EXT_TO_TYPE.values())
 
 def is_allowed_type(doc_type: str) -> bool:
     return doc_type in ALLOWED_TYPES
+
+
+# 旧版 Word 二进制（.doc）文件头；扩展名常为 .docx 但无法用 python-docx / OOXML 解析
+_OLE_DOC_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def is_legacy_word_doc(content: bytes) -> bool:
+    """是否为 Microsoft Word 97–2003 二进制文档（非 ZIP 结构的 .docx）."""
+    return bool(content) and len(content) >= 8 and content[:8] == _OLE_DOC_MAGIC
+
+
+def is_docx_zip_blob(content: bytes) -> bool:
+    """是否为 ZIP 包（标准 .docx / .xlsx 均以 PK 开头）."""
+    return bool(content) and len(content) >= 4 and content[:2] == b"PK"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -156,6 +175,8 @@ def extract_text(content: bytes, doc_type: str) -> str:
             return content.decode("utf-8", errors="replace")
         elif doc_type == "csv":
             return _extract_csv(content)
+        elif doc_type == "excel":
+            return _extract_excel(content)
         elif doc_type == "image":
             return _extract_image_description(content, filename="")
         elif doc_type == "code":
@@ -177,28 +198,146 @@ def _extract_pdf(content: bytes) -> str:
             text = page.extract_text()
             if text:
                 texts.append(text)
-        return "\n\n".join(texts)
+        result = "\n\n".join(texts)
+        logger.info(f"[pdf] extracted {len(texts)} pages, total {len(result)} chars")
+        return result
     except ImportError:
         logger.warning("[doc_processor] pypdf not installed, returning empty")
         return ""
     except Exception as e:
-        logger.warning(f"[doc_processor] PDF extraction error: {e}")
+        logger.warning(f"[doc_processor] PDF extraction error: {e}", exc_info=True)
         return ""
+
+
+_W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _extract_docx_ooxml(content: bytes) -> str:
+    """
+    直接从 OOXML（ZIP 内 word/*.xml）收集所有 w:t 文本。
+    可覆盖：文本框、部分 SmartArt、页眉页脚、脚注等 python-docx 未完整暴露的结构。
+    """
+    pieces: list[str] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            for name in sorted(zf.namelist()):
+                if not name.startswith("word/") or not name.endswith(".xml"):
+                    continue
+                if "/media/" in name or "/embeddings/" in name or "/activeX/" in name:
+                    continue
+                try:
+                    raw = zf.read(name)
+                    root = ET.fromstring(raw)
+                except (ET.ParseError, KeyError, OSError) as e:
+                    logger.debug("[docx] skip xml %s: %s", name, e)
+                    continue
+                for el in root.iter(_W_NS + "t"):
+                    if el.text:
+                        pieces.append(el.text)
+                    if el.tail:
+                        pieces.append(el.tail)
+        text = "".join(pieces)
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        if text:
+            logger.info("[docx] OOXML fallback collected %s chars from word/*.xml", len(text))
+        return text
+    except zipfile.BadZipFile:
+        logger.warning("[doc_processor] DOCX is not a valid ZIP (corrupt or not .docx)")
+        return ""
+    except Exception as e:
+        logger.warning(f"[doc_processor] DOCX OOXML extraction error: {e}", exc_info=True)
+        return ""
+
+
+def _extract_docx_via_python_docx(content: bytes) -> str:
+    from docx import Document
+
+    doc = Document(io.BytesIO(content))
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+
+    hf_lines: list[str] = []
+    for section in doc.sections:
+        for part in (section.header, section.footer):
+            if part is None:
+                continue
+            for p in part.paragraphs:
+                t = p.text.strip()
+                if t:
+                    hf_lines.append(t)
+        if section.different_first_page_header_footer:
+            for p in section.first_page_header.paragraphs:
+                t = p.text.strip()
+                if t:
+                    hf_lines.append(t)
+            for p in section.first_page_footer.paragraphs:
+                t = p.text.strip()
+                if t:
+                    hf_lines.append(t)
+
+    tables_text: list[str] = []
+    for table in doc.tables:
+        for row in table.rows:
+            row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+            if row_text:
+                tables_text.append(" | ".join(row_text))
+
+    parts_out: list[str] = []
+    if hf_lines:
+        parts_out.append("\n".join(hf_lines))
+    parts_out.append("\n".join(paragraphs))
+    if tables_text:
+        parts_out.append("[表格内容]\n" + "\n".join(tables_text))
+    result = "\n\n".join(s for s in parts_out if s.strip())
+    logger.info(
+        "[docx] python-docx: %s body paras, %s hf lines, %s table rows, %s chars",
+        len(paragraphs),
+        len(hf_lines),
+        len(tables_text),
+        len(result),
+    )
+    return result
+
+
+def _merge_docx_extractions(api_text: str, ooxml_text: str) -> str:
+    a = (api_text or "").strip()
+    x = (ooxml_text or "").strip()
+    if not a:
+        return ooxml_text or ""
+    if not x:
+        return api_text or ""
+    if x in a:
+        return api_text or ""
+    if a in x:
+        return ooxml_text or ""
+    # OOXML 明显更完整（常见于文本框 / 复杂排版论文）
+    if len(x) > len(a) * 1.08:
+        return ooxml_text or ""
+    return (api_text or "") + "\n\n" + x
 
 
 def _extract_docx(content: bytes) -> str:
-    try:
-        from docx import Document
+    if is_legacy_word_doc(content):
+        logger.warning("[doc_processor] file is legacy .doc (OLE), not Office Open XML — cannot parse as docx")
+        return ""
+    if not is_docx_zip_blob(content):
+        logger.warning("[doc_processor] DOCX content does not start with ZIP signature PK — file may be corrupt or mislabeled")
+        # 仍尝试 python-docx，少数容器可能例外
+    ooxml_text = ""
+    if is_docx_zip_blob(content):
+        ooxml_text = _extract_docx_ooxml(content)
 
-        doc = Document(io.BytesIO(content))
-        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        return "\n".join(paragraphs)
+    try:
+        api_text = _extract_docx_via_python_docx(content)
     except ImportError:
-        logger.warning("[doc_processor] python-docx not installed, returning empty")
-        return ""
+        logger.warning("[doc_processor] python-docx not installed, using OOXML only")
+        return ooxml_text
     except Exception as e:
-        logger.warning(f"[doc_processor] DOCX extraction error: {e}")
-        return ""
+        logger.warning(f"[doc_processor] DOCX python-docx extraction error: {e}", exc_info=True)
+        api_text = ""
+
+    merged = _merge_docx_extractions(api_text, ooxml_text)
+    return merged
 
 
 def _extract_csv(content: bytes) -> str:
@@ -216,6 +355,33 @@ def _extract_csv(content: bytes) -> str:
             return ""
     except Exception as e:
         logger.warning(f"[doc_processor] CSV extraction error: {e}")
+        return ""
+
+
+def _extract_excel(content: bytes) -> str:
+    """提取 Excel 文件的文本内容（支持 .xlsx 和 .xls）."""
+    try:
+        import pandas as pd
+
+        # 尝试读取所有 sheet
+        excel_file = pd.ExcelFile(io.BytesIO(content))
+        sheets_text = []
+        for sheet_name in excel_file.sheet_names:
+            try:
+                df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                sheet_content = df.to_string(index=False)
+                if sheet_content.strip():
+                    sheets_text.append(f"[Sheet: {sheet_name}]\n{sheet_content}")
+            except Exception as e:
+                logger.warning(f"[excel] failed to read sheet {sheet_name}: {e}")
+        result = "\n\n".join(sheets_text)
+        logger.info(f"[excel] extracted {len(excel_file.sheet_names)} sheets, total {len(result)} chars")
+        return result
+    except ImportError:
+        logger.warning("[doc_processor] pandas/openpyxl not installed for Excel extraction")
+        return ""
+    except Exception as e:
+        logger.warning(f"[doc_processor] Excel extraction error: {e}", exc_info=True)
         return ""
 
 
@@ -428,6 +594,17 @@ class DocumentStore:
         self.update_status(doc_id, "ready", chunk_count=count)
         logger.info(f"[doc_store] ingested {count} chunks to ChromaDB for doc {doc_id}")
         return count
+
+    def reset(self) -> None:
+        """清空文档元数据和 chunks 表（危险操作）."""
+        with _conn() as c:
+            c.execute("DELETE FROM documents")
+            c.execute("DELETE FROM doc_chunks")
+            c.commit()
+        # 同时重置单例
+        global _doc_store
+        _doc_store = None
+        logger.info("[doc_store] reset complete")
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict:

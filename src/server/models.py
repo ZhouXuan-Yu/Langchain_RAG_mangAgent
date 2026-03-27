@@ -42,11 +42,25 @@ class ConfigInfo(BaseModel):
     user_hardware: str
     temperature: float
     max_tokens: int
+    max_context_tokens: int = 8000
 
 
 class ModelSwitchRequest(BaseModel):
     """POST /api/model/switch 的请求体."""
     model: str = Field(..., description="要切换到的模型名称")
+
+
+class ConfigUpdateRequest(BaseModel):
+    """PATCH /api/config 的请求体 — 更新用户信息."""
+    user_name: Optional[str] = None
+    user_tech_stack: Optional[list[str]] = None
+    user_hardware: Optional[str] = None
+
+
+class ModelConfigRequest(BaseModel):
+    """POST /api/config/model 的请求体 — 更新模型参数."""
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=32000)
 
 
 class CostReport(BaseModel):
@@ -230,3 +244,18 @@ class DocumentListResponse(BaseModel):
 
 # 解决 forward reference
 AgentTaskHistory.model_rebuild()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  任务编排 (Crayfish Multi-Agent)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class OrchestrateRequest(BaseModel):
+    """POST /api/orchestrate 的请求体."""
+    requirement: str = Field(..., description="用户需求描述")
+    enabled_agents: list[str] = Field(
+        default=["search", "rag", "coder"],
+        description="启用的 Agent 列表，候选值: search, rag, coder"
+    )
+    quality_threshold: float = Field(default=8.0, ge=0.0, le=10.0, description="质量阈值 0-10")
+    thread_id: str = Field(default="orchestrate", description="会话 ID")

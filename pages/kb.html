@@ -26,70 +26,87 @@
 
 <div id="app">
   <header class="topbar" id="header"></header>
-  <div class="main-area">
-    <div class="noir-page">
-      <div class="noir-header">
-        <h1>知识库</h1>
-        <p>// 文档存储与向量检索中心</p>
-      </div>
-
-      <!-- 统计面板 -->
-      <div class="kb-stats-grid">
-        <div class="kb-stat-card">
-          <div class="kb-stat-val" id="kb-total-docs">0</div>
-          <div class="kb-stat-label">文档总数</div>
-        </div>
-        <div class="kb-stat-card">
-          <div class="kb-stat-val" id="kb-total-chunks">0</div>
-          <div class="kb-stat-label">文本块数</div>
-        </div>
-        <div class="kb-stat-card">
-          <div class="kb-stat-val" id="kb-total-size">0 KB</div>
-          <div class="kb-stat-label">总大小</div>
-        </div>
-        <div class="kb-stat-card">
-          <div class="kb-stat-val" id="kb-processed">0</div>
-          <div class="kb-stat-label">已处理</div>
-        </div>
-      </div>
-
-      <!-- 上传区 -->
-      <div class="upload-zone" id="upload-zone">
-        <div class="upload-zone-icon">
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-          </svg>
-        </div>
-        <p>拖拽文件到此处或 <strong>点击选择文件</strong><br><span style="font-size:10px;opacity:0.6">PDF, DOCX, TXT, Markdown, CSV, 图片, 代码文件</span></p>
-        <input type="file" id="file-input" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.py,.js,.ts,.java,.cpp,.go,.rs,.sh,.sql,.json,.yaml,.yml,.xml,.html,.css,.png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="kbHandleFiles(this.files)">
-      </div>
-
-      <!-- 搜索过滤 -->
-      <div class="search-bar">
-        <input type="text" class="search-input" id="doc-search" placeholder="搜索文件名..." oninput="filterDocs()">
-        <div class="type-filter" id="type-filter">
-          <button class="type-chip active" data-type="" onclick="setTypeFilter('')">全部</button>
-          <button class="type-chip" data-type="pdf" onclick="setTypeFilter('pdf')">PDF</button>
-          <button class="type-chip" data-type="docx" onclick="setTypeFilter('docx')">Word</button>
-          <button class="type-chip" data-type="txt" onclick="setTypeFilter('txt')">文本</button>
-          <button class="type-chip" data-type="code" onclick="setTypeFilter('code')">代码</button>
-        </div>
-      </div>
-
-      <!-- 文件列表 -->
-      <div id="doc-stats" style="margin-top:12px;font-family:'Courier Prime',monospace;font-size:11px;color:#555"></div>
-      <div class="doc-grid" id="doc-grid"></div>
-    </div>
-  </div>
+  <div class="main-area" id="main-content"></div>
 </div>
 
 <script>
+// ── 知识库页内容模板 ───────────────────────────────────────────
+var KB_CONTENT = [
+  '<div class="noir-page">',
+    '<div class="noir-header">',
+      '<h1>知识库</h1>',
+      '<p>// 文档存储与向量检索中心</p>',
+    '</div>',
+    '<div class="kb-stats-grid">',
+      '<div class="kb-stat-card"><div class="kb-stat-val" id="kb-total-docs">0</div><div class="kb-stat-label">文档总数</div></div>',
+      '<div class="kb-stat-card"><div class="kb-stat-val" id="kb-total-chunks">0</div><div class="kb-stat-label">文本块数</div></div>',
+      '<div class="kb-stat-card"><div class="kb-stat-val" id="kb-total-size">0 KB</div><div class="kb-stat-label">总大小</div></div>',
+      '<div class="kb-stat-card"><div class="kb-stat-val" id="kb-processed">0</div><div class="kb-stat-label">已处理</div></div>',
+    '</div>',
+    '<div class="upload-zone" id="upload-zone">',
+      '<div class="upload-zone-icon">',
+        '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">',
+          '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+        '</svg>',
+      '</div>',
+      '<p>拖拽文件到此处或 <strong>点击选择文件</strong><br><span style="font-size:10px;opacity:0.6">PDF, DOCX, TXT, Markdown, CSV, 图片, 代码文件</span></p>',
+      '<input type="file" id="file-input" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.py,.js,.ts,.java,.cpp,.go,.rs,.sh,.sql,.json,.yaml,.yml,.xml,.html,.css,.png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="kbHandleFiles(this.files)">',
+    '</div>',
+    '<div class="search-bar">',
+      '<input type="text" class="search-input" id="doc-search" placeholder="搜索文件名..." oninput="filterDocs()">',
+      '<div class="type-filter" id="type-filter">',
+        '<button class="type-chip active" data-type="" onclick="setTypeFilter(\'\')">全部</button>',
+        '<button class="type-chip" data-type="pdf" onclick="setTypeFilter(\'pdf\')">PDF</button>',
+        '<button class="type-chip" data-type="docx" onclick="setTypeFilter(\'docx\')">Word</button>',
+        '<button class="type-chip" data-type="txt" onclick="setTypeFilter(\'txt\')">文本</button>',
+        '<button class="type-chip" data-type="code" onclick="setTypeFilter(\'code\')">代码</button>',
+      '</div>',
+    '</div>',
+    '<div id="doc-stats" style="margin-top:12px;font-family:\'Courier Prime\',monospace;font-size:11px;color:#555"></div>',
+    '<div class="doc-grid" id="doc-grid"></div>',
+  '</div>'
+].join('');
+
+// ── 知识库页：show ────────────────────────────────────────────
+function kbOnShow(savedState) {
+  // 上传区事件
+  var zone = document.getElementById('upload-zone');
+  if (zone) {
+    zone.addEventListener('click', function() { document.getElementById('file-input').click(); });
+    zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', function() { zone.classList.remove('dragover'); });
+    zone.addEventListener('drop', function(e) {
+      e.preventDefault(); zone.classList.remove('dragover');
+      kbHandleFiles(e.dataTransfer.files);
+    });
+  }
+
+  // 恢复筛选状态
+  if (savedState && savedState.currentType !== undefined) {
+    window._currentType = savedState.currentType;
+    setTypeFilter(window._currentType);
+  }
+
+  loadDocs();
+}
+
+// ── 知识库页：save ────────────────────────────────────────────
+function kbOnSave() {
+  return { allDocs: window._allDocs, currentType: window._currentType };
+}
+
+// ── 注册 ─────────────────────────────────────────────────────
+registerSPA('/kb', KB_CONTENT, kbOnShow, kbOnSave);
+
+// ── 页面初始化 ────────────────────────────────────────────────
 injectStyles();
 initPage('/kb');
 
 var _allDocs = [];
 var _currentType = '';
 var _kbPollTimer = null;
+
+initSPA('/kb');
 
 function loadDocs() {
   if (_kbPollTimer) { clearTimeout(_kbPollTimer); _kbPollTimer = null; }
@@ -110,10 +127,14 @@ function updateStats(d) {
   var totalSize = docs.reduce(function(s, doc) { return s + (doc.size_bytes || 0); }, 0);
   var processed = docs.filter(function(doc) { return doc.status === 'ready' || doc.status === 'done'; }).length;
 
-  document.getElementById('kb-total-docs').textContent = docs.length;
-  document.getElementById('kb-total-chunks').textContent = totalChunks;
-  document.getElementById('kb-total-size').textContent = (totalSize / 1024 / 1024).toFixed(2) + ' MB';
-  document.getElementById('kb-processed').textContent = processed;
+  var el = document.getElementById('kb-total-docs');
+  if (el) el.textContent = docs.length;
+  el = document.getElementById('kb-total-chunks');
+  if (el) el.textContent = totalChunks;
+  el = document.getElementById('kb-total-size');
+  if (el) el.textContent = (totalSize / 1024 / 1024).toFixed(2) + ' MB';
+  el = document.getElementById('kb-processed');
+  if (el) el.textContent = processed;
 }
 
 function setTypeFilter(type) {
@@ -125,7 +146,8 @@ function setTypeFilter(type) {
 }
 
 function filterDocs() {
-  var keyword = document.getElementById('doc-search').value.toLowerCase();
+  var keywordEl = document.getElementById('doc-search');
+  var keyword = keywordEl ? keywordEl.value.toLowerCase() : '';
   var filtered = _allDocs.filter(function(doc) {
     var matchKeyword = !keyword || doc.filename.toLowerCase().indexOf(keyword) !== -1;
     var matchType = !_currentType || doc.doc_type === _currentType;
@@ -138,6 +160,7 @@ function renderDocs(docs) {
   var grid = document.getElementById('doc-grid');
   var stats = document.getElementById('doc-stats');
   if (stats) stats.textContent = '// 共 ' + docs.length + ' 个文档';
+  if (!grid) return;
 
   if (!docs.length) {
     grid.innerHTML = '<p style="font-family:\'Courier Prime\',monospace;font-size:12px;color:#555;grid-column:1/-1;text-align:center;padding:40px 0">暂无文档</p>';
@@ -162,15 +185,6 @@ function renderDocs(docs) {
     '</div>';
   }).join('');
 }
-
-var zone = document.getElementById('upload-zone');
-zone.addEventListener('click', function() { document.getElementById('file-input').click(); });
-zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('dragover'); });
-zone.addEventListener('dragleave', function() { zone.classList.remove('dragover'); });
-zone.addEventListener('drop', function(e) {
-  e.preventDefault(); zone.classList.remove('dragover');
-  kbHandleFiles(e.dataTransfer.files);
-});
 
 function kbHandleFiles(files) {
   if (!files || !files.length) return;
@@ -199,7 +213,8 @@ function kbDelete(id) {
   }).catch(function() { toast('删除失败', 'error'); });
 }
 
-loadDocs();
+// 暴露给 SPA 路由统一管理 polling
+window._kbLoadDocs = loadDocs;
 </script>
 
 </body>

@@ -40,71 +40,69 @@
 
 <div id="app">
   <header class="topbar" id="header"></header>
-  <div class="main-area">
-    <div class="noir-page">
-      <div class="noir-header">
-        <h1>任务协调</h1>
-        <p>// 多智能体任务调度中心</p>
-      </div>
-
-      <!-- 统计仪表板 -->
-      <div class="stats-bar">
-        <div class="stat-chip pending">
-          <span class="stat-num" id="stat-pending">0</span>
-          <span class="stat-label">待处理</span>
-        </div>
-        <div class="stat-chip running">
-          <span class="stat-num" id="stat-running">0</span>
-          <span class="stat-label">进行中</span>
-        </div>
-        <div class="stat-chip done">
-          <span class="stat-num" id="stat-done">0</span>
-          <span class="stat-label">已完成</span>
-        </div>
-        <div class="stat-chip failed">
-          <span class="stat-num" id="stat-failed">0</span>
-          <span class="stat-label">失败</span>
-        </div>
-      </div>
-
-      <!-- 搜索过滤栏 -->
-      <div class="search-bar">
-        <input type="text" class="search-input" id="task-search" placeholder="搜索任务标题..." oninput="filterTasks()">
-        <select class="filter-select" id="task-filter-agent" onchange="filterTasks()">
-          <option value="">所有 Agent</option>
-        </select>
-        <button class="btn btn-primary" onclick="tasksShowCreate()" style="background:rgba(139,0,0,0.15);border-color:rgba(139,0,0,0.4);color:#c0392b;padding:8px 16px;border-radius:8px">+ 新建任务</button>
-      </div>
-
-      <!-- Kanban -->
-      <div class="kanban" id="kanban">
-        <div class="kanban-col">
-          <div class="kanban-col-title">待处理<span class="kanban-col-count" id="col-count-pending">0</span></div>
-          <div id="col-pending"></div>
-        </div>
-        <div class="kanban-col">
-          <div class="kanban-col-title">进行中<span class="kanban-col-count" id="col-count-running">0</span></div>
-          <div id="col-running"></div>
-        </div>
-        <div class="kanban-col">
-          <div class="kanban-col-title">已完成<span class="kanban-col-count" id="col-count-done">0</span></div>
-          <div id="col-done"></div>
-        </div>
-        <div class="kanban-col">
-          <div class="kanban-col-title">失败<span class="kanban-col-count" id="col-count-failed">0</span></div>
-          <div id="col-failed"></div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <div class="main-area" id="main-content"></div>
 </div>
 
 <script>
+// ── 任务页内容模板 ────────────────────────────────────────────
+var TASKS_CONTENT = [
+  '<div class="noir-page">',
+    '<div class="noir-header">',
+      '<h1>任务协调</h1>',
+      '<p>// 多智能体任务调度中心</p>',
+    '</div>',
+    '<div class="stats-bar">',
+      '<div class="stat-chip pending"><span class="stat-num" id="stat-pending">0</span><span class="stat-label">待处理</span></div>',
+      '<div class="stat-chip running"><span class="stat-num" id="stat-running">0</span><span class="stat-label">进行中</span></div>',
+      '<div class="stat-chip done"><span class="stat-num" id="stat-done">0</span><span class="stat-label">已完成</span></div>',
+      '<div class="stat-chip failed"><span class="stat-num" id="stat-failed">0</span><span class="stat-label">失败</span></div>',
+    '</div>',
+    '<div class="search-bar">',
+      '<input type="text" class="search-input" id="task-search" placeholder="搜索任务标题..." oninput="filterTasks()">',
+      '<select class="filter-select" id="task-filter-agent" onchange="filterTasks()">',
+        '<option value="">所有 Agent</option>',
+      '</select>',
+      '<button class="btn btn-primary" onclick="navigateTo(\'/orchestrate\')" style="background:rgba(139,0,0,0.15);border-color:rgba(139,0,0,0.4);color:#c0392b;padding:8px 16px;border-radius:8px;display:flex;align-items:center;gap:6px">',
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>',
+        '编排模式',
+      '</button>',
+      '<button class="btn btn-primary" onclick="tasksShowCreate()" style="background:rgba(139,0,0,0.15);border-color:rgba(139,0,0,0.4);color:#c0392b;padding:8px 16px;border-radius:8px">+ 新建任务</button>',
+    '</div>',
+    '<div class="kanban" id="kanban">',
+      '<div class="kanban-col"><div class="kanban-col-title">待处理<span class="kanban-col-count" id="col-count-pending">0</span></div><div id="col-pending"></div></div>',
+      '<div class="kanban-col"><div class="kanban-col-title">进行中<span class="kanban-col-count" id="col-count-running">0</span></div><div id="col-running"></div></div>',
+      '<div class="kanban-col"><div class="kanban-col-title">已完成<span class="kanban-col-count" id="col-count-done">0</span></div><div id="col-done"></div></div>',
+      '<div class="kanban-col"><div class="kanban-col-title">失败<span class="kanban-col-count" id="col-count-failed">0</span></div><div id="col-failed"></div></div>',
+    '</div>',
+  '</div>'
+].join('');
+
+// ── 任务页 show ───────────────────────────────────────────────
+function tasksOnShow(savedState) {
+  if (savedState && savedState.allTasks) {
+    window._allTasks = savedState.allTasks;
+    renderKanban(window._allTasks);
+    updateStats({});
+  }
+  loadTasks();
+  loadAgentsForFilter();
+}
+
+// ── 任务页 save ──────────────────────────────────────────────
+function tasksOnSave() {
+  return { allTasks: window._allTasks };
+}
+
+// ── 注册 ─────────────────────────────────────────────────────
+registerSPA('/tasks', TASKS_CONTENT, tasksOnShow, tasksOnSave);
+
+// ── 页面初始化 ────────────────────────────────────────────────
 injectStyles();
 initPage('/tasks');
 
-var _tasksInterval = null;
 var _allTasks = [];
+
+initSPA('/tasks');
 
 function loadTasks() {
   fetch('/api/tasks').then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
@@ -118,11 +116,15 @@ function loadTasks() {
 
 function updateStats(d) {
   var counts = {pending: 0, running: 0, done: 0, failed: 0};
-  (_allTasks.length ? _allTasks : (d.tasks || [])).forEach(function(t) { if (counts[t.status] !== undefined) counts[t.status]++; });
-  document.getElementById('stat-pending').textContent = counts.pending;
-  document.getElementById('stat-running').textContent = counts.running;
-  document.getElementById('stat-done').textContent = counts.done;
-  document.getElementById('stat-failed').textContent = counts.failed;
+  _allTasks.forEach(function(t) { if (counts[t.status] !== undefined) counts[t.status]++; });
+  var el = document.getElementById('stat-pending');
+  if (el) el.textContent = counts.pending;
+  el = document.getElementById('stat-running');
+  if (el) el.textContent = counts.running;
+  el = document.getElementById('stat-done');
+  if (el) el.textContent = counts.done;
+  el = document.getElementById('stat-failed');
+  if (el) el.textContent = counts.failed;
 }
 
 function renderKanban(tasks) {
@@ -131,7 +133,7 @@ function renderKanban(tasks) {
   Object.keys(cols).forEach(function(k) {
     var el = document.getElementById(cols[k]);
     if (!el) return;
-    var items = tasks.filter(function(t) { return t.status === k; });
+    var items = (tasks || _allTasks).filter(function(t) { return t.status === k; });
     counts[k] = items.length;
     el.innerHTML = items.length ? items.map(taskCard).join('') : '<p style="font-family:\'Courier Prime\',monospace;font-size:11px;color:#555;text-align:center;padding:20px 0">暂无任务</p>';
   });
@@ -142,8 +144,10 @@ function renderKanban(tasks) {
 }
 
 function filterTasks() {
-  var keyword = document.getElementById('task-search').value.toLowerCase();
-  var agentId = document.getElementById('task-filter-agent').value;
+  var keywordEl = document.getElementById('task-search');
+  var agentEl = document.getElementById('task-filter-agent');
+  var keyword = keywordEl ? keywordEl.value.toLowerCase() : '';
+  var agentId = agentEl ? agentEl.value : '';
   var filtered = _allTasks.filter(function(t) {
     var matchKeyword = !keyword || t.title.toLowerCase().indexOf(keyword) !== -1;
     var matchAgent = !agentId || t.agent_id === agentId;
@@ -185,7 +189,8 @@ function tasksShowCreate() {
   ].join('');
   ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
   document.body.appendChild(ov);
-  document.getElementById('task-create-title').focus();
+  var t = document.getElementById('task-create-title');
+  if (t) t.focus();
   loadAgentsForSelect();
 }
 
@@ -193,6 +198,7 @@ function loadAgentsForFilter() {
   fetch('/api/agents').then(function(r) { return r.ok ? r.json() : null; }).then(function(agents) {
     if (!agents) return;
     var sel = document.getElementById('task-filter-agent');
+    if (!sel) return;
     var current = sel.value;
     sel.innerHTML = '<option value="">所有 Agent</option>' + agents.map(function(a) {
       return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>';
@@ -205,6 +211,7 @@ function loadAgentsForSelect() {
   fetch('/api/agents').then(function(r) { return r.ok ? r.json() : null; }).then(function(agents) {
     if (!agents) return;
     var sel = document.getElementById('task-create-agent');
+    if (!sel) return;
     sel.innerHTML = '<option value="">默认</option>' + agents.map(function(a) {
       return '<option value="' + esc(a.id) + '">' + esc(a.name) + ' (' + esc(a.role) + ')</option>';
     }).join('');
@@ -212,16 +219,19 @@ function loadAgentsForSelect() {
 }
 
 function tasksCreate() {
-  var title = document.getElementById('task-create-title').value.trim();
-  var desc = document.getElementById('task-create-desc').value.trim();
-  var agent_id = document.getElementById('task-create-agent').value || undefined;
+  var titleEl = document.getElementById('task-create-title');
+  var descEl = document.getElementById('task-create-desc');
+  var agentEl = document.getElementById('task-create-agent');
+  var title = titleEl ? titleEl.value.trim() : '';
+  var desc = descEl ? descEl.value.trim() : '';
+  var agent_id = agentEl ? (agentEl.value || undefined) : undefined;
   if (!title) { toast('标题不能为空', 'error'); return; }
   fetch('/api/tasks', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({title: title, description: desc, agent_id: agent_id})
   }).then(function(r) {
-    if (r.ok) { toast('任务已创建'); document.querySelector('.modal-bg').remove(); loadTasks(); }
+    if (r.ok) { toast('任务已创建'); var m = document.querySelector('.modal-bg'); if (m) m.remove(); loadTasks(); }
     else toast('创建失败', 'error');
   }).catch(function() { toast('创建失败', 'error'); });
 }
@@ -267,8 +277,8 @@ function tasksShowDetail(id) {
   document.body.appendChild(ov);
 }
 
-loadTasks();
-_tasksInterval = setInterval(loadTasks, 5000);
+// 暴露给 SPA polling
+window._tasksLoad = loadTasks;
 </script>
 
 </body>

@@ -14,10 +14,19 @@ def get_sqlite_checkpointer(db_path: str | None = None) -> Any:
     获取同步 SQLite checkpointer — 用于同步 Agent（src/main.py）。
     """
     from langgraph.checkpoint.sqlite import SqliteSaver
+    from pathlib import Path
 
     path = db_path or str(CHECKPOINT_PATH)
+
+    # 确保父目录存在
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+
     conn = sqlite3.connect(path, check_same_thread=False)
-    return SqliteSaver(conn)
+    saver = SqliteSaver(conn)
+
+    # 同步版本同样需要显式 setup()
+    saver.setup()
+    return saver
 
 
 async def get_async_sqlite_checkpointer(db_path: str | None = None) -> Any:
@@ -28,14 +37,33 @@ async def get_async_sqlite_checkpointer(db_path: str | None = None) -> Any:
         db_path: SQLite 数据库文件路径，默认使用 CHECKPOINT_PATH
 
     Returns:
-        AsyncSqliteSaver checkpointer instance
+        AsyncSqliteSaver checkpointer instance（已初始化数据库表）
     """
     import aiosqlite
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
     path = db_path or str(CHECKPOINT_PATH)
+
+    # 确保父目录存在
+    from pathlib import Path
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+
     conn = await aiosqlite.connect(path)
-    return AsyncSqliteSaver(conn)
+    saver = AsyncSqliteSaver(conn)
+
+    # 关键修复：显式调用 setup() 创建数据库表
+    # AsyncSqliteSaver 不会自动初始化，首次写入前必须调用
+    await saver.setup()
+    logger.info(f"[checkpointer] initialized DB at {path}")
+
+    # 关键修复：禁用 WAL 模式
+    # AsyncSqliteSaver 内部会创建独立连接运行 WAL 模式，
+    # 导致通过独立同步连接（如 list_threads）无法读到最新写入的数据
+    # 必须将内部连接的 journal_mode 也改为 DELETE
+    await saver.conn.execute("PRAGMA journal_mode=DELETE")
+    await saver.conn.commit()
+
+    return saver
 
 
 def get_thread_config(thread_id: str) -> dict:

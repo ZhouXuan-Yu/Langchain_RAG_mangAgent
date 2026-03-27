@@ -69,7 +69,7 @@ async def root():
 
 # ── 各功能页面路由（必须在 mount 之前，StaticFiles html=True 不会自动加 .html）──
 _PAGE_ROUTES = [
-    "tasks", "kb", "agents", "costs", "sessions", "settings",
+    "tasks", "kb", "agents", "costs", "sessions", "settings", "orchestrate",
 ]
 
 

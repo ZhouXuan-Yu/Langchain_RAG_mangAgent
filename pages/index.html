@@ -519,6 +519,7 @@ chatOnShow(null);
 
 /* ── 发送消息 ──────────────────────────────────────────── */
 var _currentQAId = 0;
+var _currentQAId_Active = null;  // 当前会话的工具块 ID（用于恢复状态）
 
 function chatSend() {
   var inp = document.getElementById('chat-text-input');
@@ -536,6 +537,7 @@ function chatSend() {
   // 创建新的问答工具调用折叠块
   _currentQAId++;
   var qaId = 'qa-' + _currentQAId;
+  _currentQAId_Active = qaId;  // 记住当前工具块 ID
   var toolContainer = document.querySelector('.tool-log-container');
   if (toolContainer) {
     toolContainer.innerHTML = '<details class="qa-tool-block" id="' + qaId + '" open>' +
@@ -590,6 +592,31 @@ function chatSend() {
               scrollBot(document.getElementById('chat-msgs'));
             } else if (d.type === 'tool') {
               chatAddTool(d.name, d.input, d.result);
+            } else if (d.type === 'tool_result') {
+              // 工具执行结果（更新已有工具条目的结果区）
+              var existingTool = null;
+              var toolEntries = document.querySelectorAll('.tool-entry');
+              for (var ti = toolEntries.length - 1; ti >= 0; ti--) {
+                var nameEl = toolEntries[ti].querySelector('.tool-entry-name');
+                if (nameEl && nameEl.textContent === d.name) {
+                  existingTool = toolEntries[ti];
+                  break;
+                }
+              }
+              if (existingTool) {
+                var resultDiv = existingTool.querySelector('.tool-entry-result');
+                if (resultDiv) {
+                  resultDiv.textContent = String(d.result || '').slice(0, 300);
+                } else {
+                  var dataDiv = existingTool.querySelector('.tool-entry-data');
+                  if (dataDiv) {
+                    var newResult = document.createElement('div');
+                    newResult.className = 'tool-entry-result';
+                    newResult.textContent = String(d.result || '').slice(0, 300);
+                    dataDiv.parentNode.insertBefore(newResult, dataDiv.nextSibling);
+                  }
+                }
+              }
             } else if (d.type === 'done') {
               if (aiBub) aiBub.innerHTML = md(full);
               G.msgs.push({role: 'assistant', content: full});
@@ -615,7 +642,13 @@ function chatSend() {
 }
 
 function updateToolBlockTitle() {
-  var block = document.getElementById('current-qa-block');
+  // 优先找当前活跃的工具块
+  var block = _currentQAId_Active ? document.getElementById(_currentQAId_Active) : null;
+  if (!block) {
+    // 后备：找最新的 qa 块
+    var allBlocks = document.querySelectorAll('.qa-tool-block');
+    if (allBlocks.length > 0) block = allBlocks[allBlocks.length - 1];
+  }
   if (block && G.tools.length > 0) {
     var label = block.querySelector('.qa-label span:last-child');
     if (label) label.textContent = '工具调用 (' + G.tools.length + ')';

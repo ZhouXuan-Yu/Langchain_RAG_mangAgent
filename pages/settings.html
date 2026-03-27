@@ -13,108 +13,184 @@
 
 <div id="app">
   <header class="topbar" id="header"></header>
-  <div class="main-area">
-    <div class="settings-page">
-      <div class="settings-section">
-        <div class="settings-section-title">模型配置</div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">默认模型</div><div class="setting-desc">对话使用的默认模型</div></div>
-          <select class="form-select" id="cfg-model" style="width:180px">
-            <option value="deepseek-chat">DeepSeek V3</option><option value="deepseek-reasoner">DeepSeek R1</option>
-          </select></div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">Temperature</div><div class="setting-desc">控制回答随机性（0=确定，1=创意）</div></div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <span id="temp-val" style="font-size:12px;font-family:var(--font-mono);color:var(--muted);min-width:30px">0.7</span>
-            <input type="range" min="0" max="100" value="70" id="temp-slider" style="width:100px;accent-color:var(--text)" oninput="document.getElementById('temp-val').textContent=(this.value/100).toFixed(1)">
-          </div></div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">最大输出 Token</div><div class="setting-desc">单次回答的最大 Token 数量</div></div>
-          <input type="number" class="form-input" id="cfg-maxtokens" style="width:120px" value="8000"></div>
-      </div>
-
-      <div class="settings-section">
-        <div class="settings-section-title">用户信息</div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">用户名</div><div class="setting-desc">Agent 对你的称呼</div></div>
-          <input type="text" class="form-input" id="cfg-username" style="width:180px" placeholder="你的名字..."></div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">技术栈</div><div class="setting-desc">你使用的编程语言和框架</div></div>
-          <input type="text" class="form-input" id="cfg-techstack" style="width:220px" placeholder="Python, Rust, ..."></div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">硬件配置</div><div class="setting-desc">你的电脑配置（用于代码优化建议）</div></div>
-          <input type="text" class="form-input" id="cfg-hardware" style="width:180px" placeholder="RTX 5060, ..."></div>
-      </div>
-
-      <div class="settings-section">
-        <div class="settings-section-title">系统偏好</div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">默认主题</div><div class="setting-desc">界面外观风格</div></div>
-          <select class="form-select" id="cfg-theme" style="width:180px" onchange="setTheme(this.value);localStorage.setItem('rag_theme',this.value)">
-            <option value="glass">Glass 玻璃态</option><option value="noir">Noir 电影黑</option>
-          </select></div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">上下文截断阈值</div><div class="setting-desc">超过此 Token 数自动裁剪历史</div></div>
-          <input type="number" class="form-input" id="cfg-maxtokens-ctx" style="width:120px" value="8000"></div>
-      </div>
-
-      <div class="settings-section">
-        <div class="settings-section-title">数据管理</div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">清空向量库</div><div class="setting-desc">删除所有 ChromaDB 存储的记忆数据</div></div>
-          <button class="btn btn-danger" onclick="clearVectorDB()" style="padding:6px 14px;font-size:12px">清空</button></div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">重置 Token 统计</div><div class="setting-desc">清零成本报表数据</div></div>
-          <button class="btn btn-danger" onclick="resetCostStats()" style="padding:6px 14px;font-size:12px">重置</button></div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">清空所有记忆</div><div class="setting-desc">删除所有长期记忆条目</div></div>
-          <button class="btn btn-danger" onclick="clearAllMemories()" style="padding:6px 14px;font-size:12px">清空</button></div>
-      </div>
-
-      <div class="settings-section">
-        <div class="settings-section-title">关于</div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">版本</div><div class="setting-desc">Langchain_RAG</div></div>
-          <span style="font-size:12px;font-family:var(--font-mono);color:var(--muted)">v1.0.0</span></div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">技术栈</div><div class="setting-desc">DeepSeek + LangGraph + ChromaDB + FastAPI</div></div></div>
-        <div class="setting-row"><div class="setting-info"><div class="setting-name">开发者</div><div class="setting-desc">周暄</div></div></div>
-      </div>
-
-      <div style="margin-top:24px;display:flex;gap:8px">
-        <button class="btn btn-primary" onclick="settingsSave()" style="background:var(--elevated);border-color:var(--border-h);color:var(--text);padding:10px 20px;border-radius:8px">保存设置</button>
-      </div>
-    </div>
-  </div>
+  <div class="main-area" id="main-content"></div>
 </div>
 
 <script>
+// ── 设置页内容模板 ─────────────────────────────────────────────
+var SETTINGS_CONTENT = [
+  '<div class="settings-page">',
+    '<div class="settings-section">',
+      '<div class="settings-section-title">模型配置</div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">默认模型</div><div class="setting-desc">对话使用的默认模型</div></div>',
+        '<select class="form-select" id="cfg-model" style="width:180px">',
+          '<option value="deepseek-chat">DeepSeek V3</option><option value="deepseek-reasoner">DeepSeek R1</option>',
+        '</select></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">Temperature</div><div class="setting-desc">控制回答随机性（0=确定，1=创意）</div></div>',
+        '<div style="display:flex;align-items:center;gap:8px">',
+          '<span id="temp-val" style="font-size:12px;font-family:var(--font-mono);color:var(--muted);min-width:30px">0.7</span>',
+          '<input type="range" min="0" max="100" value="70" id="temp-slider" style="width:100px;accent-color:var(--text)" oninput="document.getElementById(\'temp-val\').textContent=(this.value/100).toFixed(1)">',
+        '</div></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">最大输出 Token</div><div class="setting-desc">单次回答的最大 Token 数量</div></div>',
+        '<input type="number" class="form-input" id="cfg-maxtokens" style="width:120px" value="8000"></div>',
+    '</div>',
+    '<div class="settings-section">',
+      '<div class="settings-section-title">用户信息</div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">用户名</div><div class="setting-desc">Agent 对你的称呼</div></div>',
+        '<input type="text" class="form-input" id="cfg-username" style="width:180px" placeholder="你的名字..."></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">技术栈</div><div class="setting-desc">你使用的编程语言和框架</div></div>',
+        '<input type="text" class="form-input" id="cfg-techstack" style="width:220px" placeholder="Python, Rust, ..."></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">硬件配置</div><div class="setting-desc">你的电脑配置（用于代码优化建议）</div></div>',
+        '<input type="text" class="form-input" id="cfg-hardware" style="width:180px" placeholder="RTX 5060, ..."></div>',
+    '</div>',
+    '<div class="settings-section">',
+      '<div class="settings-section-title">系统偏好</div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">默认主题</div><div class="setting-desc">界面外观风格</div></div>',
+        '<select class="form-select" id="cfg-theme" style="width:180px" onchange="setTheme(this.value);localStorage.setItem(\'rag_theme\',this.value)">',
+          '<option value="glass">Glass 玻璃态</option><option value="noir">Noir 电影黑</option>',
+        '</select></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">上下文截断阈值</div><div class="setting-desc">超过此 Token 数自动裁剪历史</div></div>',
+        '<input type="number" class="form-input" id="cfg-maxtokens-ctx" style="width:120px" value="8000"></div>',
+    '</div>',
+    '<div class="settings-section">',
+      '<div class="settings-section-title">数据管理</div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">清空向量库</div><div class="setting-desc">删除所有 ChromaDB 存储的记忆数据</div></div>',
+        '<button class="btn btn-danger" onclick="clearVectorDB()" style="padding:6px 14px;font-size:12px">清空</button></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">重置 Token 统计</div><div class="setting-desc">清零成本报表数据</div></div>',
+        '<button class="btn btn-danger" onclick="resetCostStats()" style="padding:6px 14px;font-size:12px">重置</button></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">清空所有记忆</div><div class="setting-desc">删除所有长期记忆条目</div></div>',
+        '<button class="btn btn-danger" onclick="clearAllMemories()" style="padding:6px 14px;font-size:12px">清空</button></div>',
+    '</div>',
+    '<div class="settings-section">',
+      '<div class="settings-section-title">关于</div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">版本</div><div class="setting-desc">Langchain_RAG</div></div>',
+        '<span style="font-size:12px;font-family:var(--font-mono);color:var(--muted)">v1.0.0</span></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">技术栈</div><div class="setting-desc">DeepSeek + LangGraph + ChromaDB + FastAPI</div></div></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">开发者</div><div class="setting-desc">周暄</div></div></div>',
+    '</div>',
+    '<div style="margin-top:24px;display:flex;gap:8px">',
+      '<button class="btn btn-primary" onclick="settingsSave()" style="background:var(--elevated);border-color:var(--border-h);color:var(--text);padding:10px 20px;border-radius:8px">保存设置</button>',
+    '</div>',
+  '</div>'
+].join('');
+
+// ── 设置页 show ──────────────────────────────────────────────
+function settingsOnShow(savedState) {
+  // 恢复滚动位置
+  if (savedState && savedState.scrollTop) {
+    setTimeout(function() {
+      var main = document.getElementById('main-content');
+      if (main) main.scrollTop = savedState.scrollTop;
+    }, 10);
+  }
+  loadConfig(function(c) {
+    var el = document.getElementById('cfg-model');
+    if (el) el.value = c.current_model || 'deepseek-chat';
+    var tv = (c.temperature || 0.7).toFixed(1);
+    el = document.getElementById('temp-val');
+    if (el) el.textContent = tv;
+    el = document.getElementById('temp-slider');
+    if (el) el.value = Math.round((c.temperature || 0.7) * 100);
+    el = document.getElementById('cfg-maxtokens');
+    if (el) el.value = c.max_tokens || 8000;
+    el = document.getElementById('cfg-username');
+    if (el) el.value = c.user_name || '';
+    el = document.getElementById('cfg-techstack');
+    if (el) el.value = (c.user_tech_stack || []).join(', ');
+    el = document.getElementById('cfg-hardware');
+    if (el) el.value = c.user_hardware || '';
+    el = document.getElementById('cfg-theme');
+    if (el) el.value = localStorage.getItem('rag_theme') || 'glass';
+    el = document.getElementById('cfg-maxtokens-ctx');
+    if (el) el.value = c.max_context_tokens || 8000;
+  });
+}
+
+// ── 设置页 save ─────────────────────────────────────────────
+function settingsOnSave() {
+  var main = document.getElementById('main-content');
+  return { scrollTop: main ? main.scrollTop : 0 };
+}
+
+// ── 注册 ─────────────────────────────────────────────────────
+registerSPA('/settings', SETTINGS_CONTENT, settingsOnShow, settingsOnSave);
+
+// ── 页面初始化 ────────────────────────────────────────────────
 injectStyles();
 initPage('/settings');
 
-loadConfig(function(c) {
-  document.getElementById('cfg-model').value = c.current_model || 'deepseek-chat';
-  var tv = (c.temperature || 0.7).toFixed(1);
-  document.getElementById('temp-val').textContent = tv;
-  document.getElementById('temp-slider').value = Math.round((c.temperature || 0.7) * 100);
-  document.getElementById('cfg-maxtokens').value = c.max_tokens || 8000;
-  document.getElementById('cfg-username').value = c.user_name || '';
-  document.getElementById('cfg-techstack').value = (c.user_tech_stack || []).join(', ');
-  document.getElementById('cfg-hardware').value = c.user_hardware || '';
-  document.getElementById('cfg-theme').value = localStorage.getItem('rag_theme') || 'glass';
-  document.getElementById('cfg-maxtokens-ctx').value = c.max_context_tokens || 8000;
-});
+initSPA('/settings');
 
 function settingsSave() {
-  toast('设置已保存（部分设置需刷新页面生效）');
+  var tempEl = document.getElementById('temp-slider');
+  var maxTokensEl = document.getElementById('cfg-maxtokens');
+
+  var temperature = tempEl ? parseFloat((tempEl.value / 100).toFixed(1)) : 0.7;
+  var maxTokens = maxTokensEl ? parseInt(maxTokensEl.value) : 8000;
+
+  // 保存模型参数（temperature、max_tokens）
+  fetch('/api/config/model', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({temperature: temperature, max_tokens: maxTokens})
+  }).then(function(r) {
+    if (r.ok) {
+      // 更新前端显示
+      var tv = document.getElementById('temp-val');
+      if (tv) tv.textContent = temperature.toFixed(1);
+      toast('设置已保存（模型参数已更新）');
+    } else {
+      toast('保存失败', 'error');
+    }
+  }).catch(function() {
+    toast('保存失败', 'error');
+  });
 }
 
 function clearVectorDB() {
-  if (!confirm('确定要清空整个向量数据库吗？\n此操作不可恢复！')) return;
-  toast('向量库清空功能开发中...', 'error');
+  if (!confirm('确定要清空整个向量数据库吗？\n此操作不可恢复！\n包括所有长期记忆和文档 chunks。')) return;
+  fetch('/api/chroma/reset', {method: 'DELETE'}).then(function(r) {
+    if (r.ok) {
+      toast('向量库已清空');
+    } else {
+      return r.json().then(function(d) { throw new Error(d.detail || '未知错误'); });
+    }
+  }).then(function() {
+    // 同时清空前端记忆
+    loadConfig(function() {});
+  }).catch(function(e) {
+    toast('清空失败: ' + (e.message || '未知错误'), 'error');
+  });
 }
 
 function resetCostStats() {
-  if (!confirm('确定要重置 Token 统计吗？')) return;
-  toast('统计已重置');
+  if (!confirm('确定要重置 Token 统计吗？\n当前累计数据将被清零。')) return;
+  fetch('/api/cost/reset', {method: 'POST'}).then(function(r) {
+    if (r.ok) {
+      toast('统计已重置');
+    } else {
+      toast('重置失败', 'error');
+    }
+  }).catch(function() {
+    toast('重置失败', 'error');
+  });
 }
 
 function clearAllMemories() {
   if (!confirm('确定要清空所有长期记忆吗？\n此操作不可恢复！')) return;
   fetch('/api/memory').then(function(r) { return r.ok ? r.json() : null; }).then(function(mems) {
-    if (!mems) return;
+    if (!mems) { toast('获取记忆失败', 'error'); return; }
+    if (!mems.length) { toast('没有可清空的记忆'); return; }
     var promises = mems.map(function(m) {
       return fetch('/api/memory/' + m.id, {method: 'DELETE'});
     });
-    Promise.all(promises).then(function() {
-      toast('所有记忆已清空');
+    Promise.all(promises).then(function(results) {
+      var failed = results.filter(function(r) { return !r.ok; }).length;
+      if (failed === 0) {
+        toast('所有记忆已清空（共 ' + mems.length + ' 条）');
+      } else {
+        toast('清空完成（' + (mems.length - failed) + '/' + mems.length + ' 条）', failed > 0 ? 'error' : '');
+      }
     }).catch(function() { toast('清空失败', 'error'); });
   }).catch(function() { toast('清空失败', 'error'); });
 }

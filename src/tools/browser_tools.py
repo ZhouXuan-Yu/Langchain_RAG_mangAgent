@@ -76,9 +76,16 @@ def _get_browser() -> Any:
             print("⚠️  浏览器启动失败！")
             print(f"错误信息: {e}")
             print("-" * 60)
-            print("解决方法:")
-            print("  1. 运行 'playwright install chromium' 安装 Chromium")
-            print("  2. 或者确保本机 Chrome 已安装并可访问")
+            print("检测到以下 Chromium/Chrome 不可用:")
+            print("  1. 本机 Chrome 未找到（已尝试默认安装路径）")
+            print("  2. Playwright 内置 Chromium 也无法启动")
+            print("-" * 60)
+            print("解决方法 (二选一):")
+            print("  方案A: 运行 'playwright install chromium' 安装 Playwright Chromium")
+            print("  方案B: 确保本机 Chrome 已安装于以下路径之一:")
+            for path in chrome_paths:
+                print(f"         - {path}")
+            print("  注意: 使用本机 Chrome 无需运行 playwright install chromium")
             print("=" * 60 + "\n")
             raise
 
