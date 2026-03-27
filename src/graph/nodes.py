@@ -375,7 +375,6 @@ async def reason_node(state: AgentState) -> dict:
 
     # 检查 LLM 是否触发了工具调用（tool_calls 属性）
     tool_calls_made = []
-    _tc_names = []
     if hasattr(response, "tool_calls") and response.tool_calls:
         for tc in response.tool_calls:
             tool_name = tc.get("name", "unknown")
@@ -384,32 +383,7 @@ async def reason_node(state: AgentState) -> dict:
                 "name": tool_name,
                 "input": tool_args,
             })
-            _tc_names.append(tool_name)
-        logger.info("[reason_node] LLM triggered tool calls: %s", _tc_names)
-
-    # 调试日志：记录 reason_node 执行结果
-    try:
-        import datetime as _dt2, json as _json
-        _line = _json.dumps({
-            "sessionId": "5df370",
-            "id": f"log_{_dt2.datetime.now().timestamp():.0f}",
-            "timestamp": int(_dt2.datetime.now().timestamp() * 1000),
-            "location": "nodes.py:reason_node",
-            "message": "reason_node LLM response",
-            "data": {
-                "has_tool_calls": bool(tool_calls_made),
-                "tool_names": _tc_names,
-                "tool_count": len(tool_calls_made),
-                "content_preview": str(response_text)[:120],
-                "response_type": type(response).__name__,
-                "pending_memory_count": len(pending),
-            },
-            "hypothesisId": "H2",
-        }, ensure_ascii=False)
-        with open(r"D:\Aprogress\Langchain\debug-5df370.log", "a", encoding="utf-8") as _f:
-            _f.write(_line + "\n")
-    except Exception:
-        pass
+        logger.info("[reason_node] LLM triggered tool calls: %s", [t["name"] for t in tool_calls_made])
 
     # 检查 ToolMessage（LLM 调用工具后的工具返回结果）
     tool_results = []
@@ -489,25 +463,6 @@ async def memory_reflect_node(state: AgentState) -> dict:
 
 # ── Loop Control ──────────────────────────────────────────────────────────────
 
-# #region agent log
-import datetime as _dt
-_LOG_PATH = r"D:\Aprogress\Langchain\debug-5df370.log"
-
-def _dbg(hid: str, msg: str, data: dict) -> None:
-    import json
-    line = json.dumps({
-        "sessionId": "5df370",
-        "id": f"log_{_dt.datetime.now().timestamp():.0f}",
-        "timestamp": int(_dt.datetime.now().timestamp() * 1000),
-        "location": "nodes.py:should_continue",
-        "message": msg,
-        "data": data,
-        "hypothesisId": hid,
-    }, ensure_ascii=False)
-    with open(_LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
-# #endregion
-
 def should_continue(state: AgentState) -> Literal["router", "reason_node", "__end__"]:
     """
     判断是否继续循环 — 支持 LLM 多工具连续调用.
@@ -527,56 +482,31 @@ def should_continue(state: AgentState) -> Literal["router", "reason_node", "__en
     messages = state.get("messages", [])
     turn_count = state.get("turn_count", 0)
 
-    _dbg("H1", "should_continue called", {
-        "turn_count": turn_count,
-        "msg_count": len(messages),
-        "msg_types": [(type(m).__name__) for m in messages[-5:]],
-    })
-
     if turn_count >= 10:
         logger.warning("[loop] turn_count exceeded, terminating")
-        _dbg("H1", "turn_count exceeded → __end__", {"turn_count": turn_count})
         return "__end__"
 
     if not messages:
-        _dbg("H1", "no messages → router", {})
         return "router"
 
     last_item = messages[-1]
-    last_type = type(last_item).__name__
     has_tool_calls = False
     is_aimsg = isinstance(last_item, AIMessage)
 
     if is_aimsg:
         tcs = getattr(last_item, "tool_calls", None)
         has_tool_calls = bool(tcs)
-        _dbg("H1", "last is AIMessage", {
-            "has_tool_calls": has_tool_calls,
-            "tool_call_count": len(tcs) if tcs else 0,
-            "content_preview": str(getattr(last_item, "content", ""))[:80],
-            "msg_id": getattr(last_item, "id", ""),
-        })
         if has_tool_calls:
             logger.info(f"[should_continue] AIMessage has {len(tcs)} pending tool_calls → reason_node")
-            _dbg("H1", "has_tool_calls=True → reason_node", {"count": len(tcs)})
             return "reason_node"
-        elif hasattr(last_item, "content") and last_item.content:
+        if hasattr(last_item, "content") and last_item.content:
             logger.info("[should_continue] AIMessage text reply → __end__")
-            _dbg("H1", "AIMessage text reply (no tools) → __end__", {"content": str(last_item.content)[:80]})
             return "__end__"
     elif isinstance(last_item, ToolMessage):
-        _dbg("H1", "last is ToolMessage → router", {
-            "tool": getattr(last_item, "name", getattr(last_item, "tool_call_id", "?")),
-            "content_preview": str(getattr(last_item, "content", ""))[:80],
-        })
         return "router"
-    else:
-        _dbg("H1", "last is neither AIMessage nor ToolMessage", {"type": last_type})
 
     pending = state.get("pending_memory", [])
     if pending:
-        _dbg("H1", "has pending_memory → router", {"count": len(pending)})
         return "router"
 
-    _dbg("H1", "fallback → router", {})
     return "router"

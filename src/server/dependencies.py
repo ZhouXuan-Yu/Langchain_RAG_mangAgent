@@ -1,6 +1,7 @@
 """Dependencies — 全局 Agent 单例、模型切换、共享状态.
 
 避免每次请求重建 LangGraph agent，使用单例缓存。
+支持多 Provider 模型（DeepSeek / Claude / OpenAI / Gemini）。
 """
 
 import asyncio
@@ -21,12 +22,12 @@ from src.config import (
     USER_TECH_STACK,
     USER_HARDWARE,
     USER_PROJECTS,
+    RUNTIME_API_KEYS,
 )
-from src.llm import init_deepseek_llm
 from src.memory.sqlite_store import get_sqlite_checkpointer, get_async_sqlite_checkpointer
 from src.graph import build_react_agent
 
-# ── 全局 Agent 注册表（按模型缓存）────────────────────────────────────────────
+# ── 全局 Agent 注册表（按 "provider/model" 缓存）──────────────────────────────
 _agent_registry: dict[str, Any] = {}
 
 # ── 当前活动模型 ──────────────────────────────────────────────────────────────
@@ -43,7 +44,6 @@ def set_temperature(temp: float) -> None:
     """更新 temperature 参数，下次请求时生效."""
     global _current_temperature
     _current_temperature = float(temp)
-    # 清除 agent 缓存，使新 agent 使用新参数
     _agent_registry.clear()
     logger.info(f"[config] temperature set to {temp}")
 
@@ -66,17 +66,82 @@ async def _get_async_checkpointer() -> BaseCheckpointSaver:
     return _async_checkpointer
 
 
+def _parse_model_key(model: str) -> tuple[str, str]:
+    """
+    解析模型字符串，返回 (provider, model_name)。
+
+    支持两种格式：
+      - "deepseek-chat"             → ("deepseek", "deepseek-chat")
+      - "claude/claude-3-5-sonnet"  → ("claude", "claude-3-5-sonnet")
+    """
+    if "/" in model:
+        parts = model.split("/", 1)
+        return parts[0], parts[1]
+    # Default: treat as deepseek if it's a known deepseek model, else "deepseek"
+    return "deepseek", model
+
+
+def _init_llm_for_model(
+    provider: str,
+    model_name: str,
+    temperature: float,
+    max_tokens: int,
+    streaming: bool = True,
+) -> Any:
+    """根据 provider 初始化对应的 LLM client."""
+    if provider == "claude":
+        from src.llm.claude_client import init_claude_llm
+
+        return init_claude_llm(
+            model=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            streaming=streaming,
+        )
+    elif provider == "openai":
+        from src.llm.openai_client import init_openai_llm
+
+        return init_openai_llm(
+            model=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            streaming=streaming,
+        )
+    elif provider == "gemini":
+        from src.llm.google_client import init_gemini_llm
+
+        return init_gemini_llm(
+            model=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            streaming=streaming,
+        )
+    else:
+        # Default to DeepSeek
+        from src.llm.deepseek_client import init_deepseek_llm
+
+        return init_deepseek_llm(
+            model=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            streaming=streaming,
+        )
+
+
 async def get_agent(model: Optional[str] = None) -> Any:
     """
     获取（或按需构建）指定模型的 ReAct Agent.
 
-    使用 create_react_agent 构建，完整支持 LLM 工具调用和 astream_events。
+    模型字符串格式：支持 "provider/model" 或纯模型名（默认 deepseek）。
+    内部按 "provider/model" 缓存 agent 实例。
     """
     key = model or _current_model
     if key not in _agent_registry:
         logger.info(f"[agent_registry] building new agent for model={key}")
-        llm = init_deepseek_llm(
-            model=key,
+        provider, model_name = _parse_model_key(key)
+        llm = _init_llm_for_model(
+            provider=provider,
+            model_name=model_name,
             temperature=_current_temperature,
             max_tokens=_current_max_tokens,
             streaming=True,
@@ -87,12 +152,19 @@ async def get_agent(model: Optional[str] = None) -> Any:
             f"用户的技术栈: {', '.join(USER_TECH_STACK)}。\n"
             f"用户的 GPU 硬件: {USER_HARDWARE}。\n"
             f"用户的项目: {', '.join(USER_PROJECTS)}。\n"
-            "请结合用户的背景信息，提供精准、有帮助的回答。\n"
-            "当需要搜索最新信息时，使用 web_search 工具。\n"
-            "当需要检索用户个人长期记忆/偏好时，使用 memory_search 工具。\n"
-            "当问题涉及用户在知识库中上传的文档（PDF/Word 等）时，使用 knowledge_base_search 工具。\n"
-            "当需要保存重要信息到记忆时，使用 save_memory 工具。\n"
-            "当需要计算时，使用 calculator 工具。"
+            "\n"
+            "## 工具使用（强制）\n"
+            "在收到用户每一轮新问题时，你必须先调用工具获取事实依据，禁止在未使用工具的情况下凭猜测作答。\n"
+            "优先组合使用多种工具：例如同时 memory_search + knowledge_base_search；需要时效信息时再加 web_search。\n"
+            "仅在工具结果返回后，再基于结果用中文给出简洁、结构化的最终回答。\n"
+            "\n"
+            "## 输出格式\n"
+            "使用 Markdown，但列表请用「顶格」或「最多一级」缩进：用 `- ` 开头，子项也用 `- ` 并尽量少缩进空格，"
+            "不要使用多层嵌套缩进列表，避免前端渲染成阶梯状。\n"
+            "需要分点时用 `1.` `2.` 有序列表或短段落小标题（###）。\n"
+            "\n"
+            "工具说明：web_search 联网检索；browse_page 抓取网页正文；memory_search 检索用户长期记忆；"
+            "knowledge_base_search 检索知识库文档；save_memory 保存重要事实；calculator 计算；process_image 图像相关。"
         )
         _agent_registry[key] = build_react_agent(
             llm,

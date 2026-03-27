@@ -14,19 +14,24 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 
 def _open_browser(url: str) -> None:
-    """跨平台打开浏览器 — 解决 Windows PowerShell 环境下 webbrowser.open 失效的问题."""
+    """跨平台打开浏览器."""
     try:
         if sys.platform == "win32":
-            subprocess.Popen(["cmd", "/c", "start", "", url], shell=False, detached=True)
+            DETACHED_PROCESS = 0x00000008
+            CREATE_NO_WINDOW = 0x08000000
+            subprocess.Popen(
+                ["cmd", "/c", "start", "", url],
+                shell=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+            )
         else:
             import webbrowser
             webbrowser.open(url)
     except Exception:
-        try:
-            import webbrowser
-            webbrowser.open(url)
-        except Exception:
-            pass
+        pass
 
 
 def _is_port_open(host: str, port: int) -> bool:
@@ -62,7 +67,7 @@ def main():
         )
         return
 
-    # 4. 启动后端（stdout=PIPE 时需后台线程实时读取，否则管道满了会阻塞子进程）
+    # 4. 启动后端（stdout/stderr 直接继承父进程，避免 PIPE 死锁）
     print(f"[INFO] 正在启动后端服务 (FastAPI + LangGraph) 端口 {port} ...")
     server = subprocess.Popen(
         [
@@ -73,38 +78,19 @@ def main():
         ],
         cwd=PROJECT_ROOT,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
     )
 
+    # 5. 等待服务就绪
     import urllib.request
     import urllib.error
-    import threading
-
-    # 后台线程：实时打印子进程输出（防止 PIPE 缓冲阻塞）
-    def _read_stdout(proc, outfile):
-        try:
-            for line in iter(proc.stdout.readline, b""):
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace")
-                outfile.write(text)
-                outfile.flush()
-        except Exception:
-            pass
-
-    output_lines = []
-    reader = threading.Thread(target=_read_stdout, args=(server, sys.stdout), daemon=True)
-    reader.start()
-
-    # 5. 等待服务就绪
     health_url = f"http://localhost:{port}/health"
     print(f"[INFO] 等待服务启动 (端口 {port})...")
 
     for i in range(60):
         time.sleep(0.5)
-        if server.poll() is not None:
-            print(f"\n[ERROR] 后端进程异常退出 (exit {server.returncode})，请查看上方 uvicorn 报错。")
+        rc = server.poll()
+        if rc is not None:
+            print(f"\n[ERROR] 后端进程异常退出 (exit {rc})")
             return
         try:
             req = urllib.request.Request(health_url, headers={"User-Agent": "python"})
@@ -116,7 +102,7 @@ def main():
         if i % 10 == 0:
             print(f"[INFO]  等待中... ({i+1}/60)")
     else:
-        print("[ERROR] 服务启动超时（约 30 秒），uvicorn 可能因 import 错误无法启动，请查看上方报错。")
+        print("[ERROR] 服务启动超时（约 30 秒）")
         server.terminate()
         server.wait()
         return
@@ -126,15 +112,24 @@ def main():
     print(f"[INFO] 服务已就绪，正在打开浏览器: {url}")
     _open_browser(url)
 
-    # 7. 等待子进程退出（后台线程负责打印输出）
+    # 7. 等待子进程退出
     print("[INFO] 服务运行中，按 Ctrl+C 停止所有服务\n")
     try:
         server.wait()
     except KeyboardInterrupt:
-        print("\n[INFO] 收到 Ctrl+C，正在强制关闭...")
-        server.kill()
-        server.wait()
-    print("[INFO] 服务已关闭。")
+        print("\n[INFO] 收到 Ctrl+C，正在关闭...")
+        server.terminate()
+        try:
+            server.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait()
+
+    rc = server.returncode
+    if rc == 0:
+        print("[INFO] 服务已关闭。")
+    else:
+        print(f"[INFO] 服务已关闭 (exit {rc})。")
     sys.stdout.flush()
 
 

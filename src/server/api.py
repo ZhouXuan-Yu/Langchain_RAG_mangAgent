@@ -9,22 +9,6 @@ from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 
-def _log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    try:
-        import json as _j
-        _path = Path(__file__).resolve().parent.parent.parent / "debug-743147.log"
-        with _path.open("a", encoding="utf-8") as _f:
-            _f.write(_j.dumps({
-                "sessionId": "743147",
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
 from fastapi import APIRouter, File, Form, HTTPException, Header, UploadFile
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
@@ -34,6 +18,7 @@ from src.server.models import (
     AgentProfile,
     AgentTaskHistory,
     AgentUpdateRequest,
+    ApiKeysUpdateRequest,
     ChatRequest,
     ConfigInfo,
     ConfigUpdateRequest,
@@ -53,6 +38,9 @@ from src.server.models import (
     ModelConfigRequest,
     ModelSwitchRequest,
     OrchestrateRequest,
+    SessionSearchRequest,
+    SessionSearchResponse,
+    SessionSearchResult,
     SessionSummary,
     SessionUpdateRequest,
     TaskBatchCreateRequest,
@@ -80,6 +68,8 @@ from src.config import (
     USER_TECH_STACK,
     USER_HARDWARE,
     MAX_CONTEXT_TOKENS,
+    MODEL_PROVIDERS,
+    is_provider_configured,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,11 +78,27 @@ router = APIRouter(prefix="/api")
 # ── 全局 Token 追踪器 ──────────────────────────────────────────────────────────
 _token_tracker = TokenTracker(model=DEFAULT_MODEL)
 
-# ── 可用模型列表 ───────────────────────────────────────────────────────────────
-AVAILABLE_MODELS = [
-    "deepseek-chat",       # DeepSeek V3
-    "deepseek-reasoner",   # DeepSeek R1
-]
+# ═══════════════════════════════════════════════════════════════════════════════
+#  可用模型列表（从 MODEL_PROVIDERS 动态生成）───────────────────────────────────
+def _build_available_models_response() -> list[dict]:
+    """
+    构建前端可用的模型列表，按 provider 分组。
+    返回: [{
+        provider_id: "deepseek",
+        provider_name: "DeepSeek",
+        models: [{id, name, description}, ...],
+        configured: True/False
+    }, ...]
+    """
+    result = []
+    for pid, pcfg in MODEL_PROVIDERS.items():
+        result.append({
+            "provider_id": pid,
+            "provider_name": pcfg["name"],
+            "models": pcfg.get("default_models", []),
+            "configured": is_provider_configured(pid),
+        })
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -112,6 +118,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         thread_id = req.thread_id
         title_hint = req.message[:60] if req.message else ""
         await asyncio.to_thread(upsert_session, thread_id, title_hint)
+        logger.info("[H1] upsert_session called thread_id=%s title_hint=%s", thread_id, title_hint[:30] if title_hint else "")
 
         # on_tool_start / on_tool_end 对同一 run_id 各应推送一次；此前共用 dedup 导致
         # tool_result 永远被跳过，前端卡片一直停在「等待结果」。
@@ -126,35 +133,6 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
             rid = ev.get("run_id")
             return str(rid) if rid else ""
 
-        # #region agent log (old session)
-        import datetime as _dt, json as _json
-        def _log_ev(hid, msg, data):
-            line = _json.dumps({
-                "sessionId": "5df370",
-                "id": f"log_{_dt.datetime.now().timestamp():.0f}",
-                "timestamp": int(_dt.datetime.now().timestamp() * 1000),
-                "location": "api.py:chat_stream:event_generator",
-                "message": msg,
-                "data": data,
-                "hypothesisId": hid,
-            }, ensure_ascii=False)
-            with open(r"D:\Aprogress\Langchain\debug-5df370.log", "a", encoding="utf-8") as _f:
-                _f.write(line + "\n")
-            # Also log to current session
-            line2 = _json.dumps({
-                "sessionId": "4eeec4",
-                "id": f"log_{_dt.datetime.now().timestamp():.0f}_{_dt.datetime.now().microsecond}",
-                "timestamp": int(_dt.datetime.now().timestamp() * 1000),
-                "location": "api.py:chat_stream",
-                "message": msg,
-                "data": data,
-                "runId": "debug",
-                "hypothesisId": hid,
-            }, ensure_ascii=False)
-            with open(r"D:\Aprogress\Langchain\debug-4eeec4.log", "a", encoding="utf-8") as _f2:
-                _f2.write(line2 + "\n")
-        # #endregion
-
         try:
             # ── 使用 astream_events (version="v2") 捕获所有流式事件 ─────────────
             # 每个事件: {"event": str, "run_id": str, "data": {...}, ...}
@@ -165,22 +143,12 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
             ):
                 ev_type = event.get("event", "")
 
-                # 调试：记录所有事件类型
-                _log_ev("H3", f"astream_events:ev_type={ev_type}", {
-                    "ev_type": ev_type,
-                    "run_id": _event_run_id(event),
-                    "has_data": bool(event.get("data")),
-                })
-
                 # ── LLM 开始生成 ───────────────────────────────────────────────────
                 if ev_type in ("on_chat_model_start", "chat_model_start"):
-                    _log_ev("H3", "on_chat_model_start", {
-                        "name": event.get("name", ""),
-                        "run_id": _event_run_id(event),
-                    })
+                    pass  # noop
 
-                # ── 用户消息（新 turn） ────────────────────────────────────────
-                if ev_type in ("on_chat_model_stream", "chat_model_stream"):
+                # ── 流式 token ───────────────────────────────────────────────────
+                elif ev_type in ("on_chat_model_stream", "chat_model_stream"):
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content") and chunk.content:
                         content = chunk.content
@@ -192,16 +160,13 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                                 elif isinstance(part, dict) and part.get("type") == "text":
                                     text_parts.append(part.get("text") or "")
                             content = "".join(text_parts)
-                        # 检测到 "Human:" 或用户消息前缀 → 新 turn
                         if content.strip().startswith("Human:"):
                             cur_turn += 1
                             cur_step = 0
-                            _log_ev("H1", "TURN_INCREMENT", {"cur_turn": cur_turn, "content_preview": content[:60]})
                         skip = (
-                            content.strip() in ("Tool", "Tool/use", "Invoking tool:", "=" * 20) or
-                            content.strip().startswith("=") and len(content.strip()) < 5
+                            content.strip() in ("Tool", "Tool/use", "Invoking tool:", "=" * 20)
+                            or content.strip().startswith("=") and len(content.strip()) < 5
                         )
-                        _log_ev("H1", "STREAM_TOKEN", {"skip": skip, "cur_turn": cur_turn, "cur_step": cur_step, "content_len": len(content)})
                         if not skip:
                             yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
@@ -217,7 +182,6 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input, 'result': ''})}\n\n"
                     # 持久化到 DB
                     cur_step += 1
-                    _log_ev("H1", "SAVE_TOOL_START", {"thread_id": thread_id, "cur_turn": cur_turn, "cur_step": cur_step, "tool_name": tool_name})
                     await asyncio.to_thread(
                         save_tool_event,
                         thread_id, cur_turn, cur_step, 1,
@@ -240,7 +204,6 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         seen_tool_ends.add(dedup_key)
                         yield f"data: {json.dumps({'type': 'tool_result', 'name': tool_name, 'result': tool_result})}\n\n"
                     # 持久化到 DB（seq=2 表示结果）
-                    _log_ev("H1", "SAVE_TOOL_RESULT", {"thread_id": thread_id, "cur_turn": cur_turn, "cur_step": cur_step, "tool_name": tool_name, "result_len": len(tool_result)})
                     await asyncio.to_thread(
                         save_tool_event,
                         thread_id, cur_turn, cur_step, 2,
@@ -248,22 +211,17 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         "", tool_result[:5000],
                     )
 
-                # ── LLM 完整回复结束（捕获 tool_calls 状态）─────────────────────────
+                # ── LLM 完整回复结束（捕获 token 用量并写入 tracker）───────────────
                 elif ev_type in ("on_chat_model_end", "chat_model_end"):
                     output = event.get("data", {}).get("output")
-                    _log_ev("H4", "on_chat_model_end", {
-                        "output_type": type(output).__name__ if output else "None",
-                        "output_repr": repr(output)[:200] if output else "None",
-                    })
-                    if output:
-                        tcs = getattr(output, "tool_calls", None)
-                        if tcs is None and hasattr(output, "__dict__"):
-                            tcs = output.__dict__.get("tool_calls")
-                        _log_ev("H4", "tool_calls_check", {
-                            "has_tool_calls": bool(tcs),
-                            "tool_call_count": len(tcs) if tcs else 0,
-                            "tool_names": [tc.get("name") for tc in tcs] if tcs else [],
-                        })
+                    if output is not None:
+                        um = getattr(output, "usage_metadata", None) or {}
+                        if isinstance(um, dict):
+                            prompt_tokens = max(0, (um.get("input_tokens", 0) or 0) - ((um.get("input_token_details", {}) or {}).get("cache_read", 0) or 0))
+                            completion_tokens = um.get("output_tokens", 0) or 0
+                            rm = getattr(output, "response_metadata", None) or {}
+                            model_name = (rm.get("model_name", "") if isinstance(rm, dict) else "") or req.model or get_current_model()
+                            _token_tracker.record(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, model=model_name, label="llm_call")
 
             # ── 推送完成信号 ─────────────────────────────────────────────────
             yield f"data: {json.dumps({'type': 'done', 'content': ''})}\n\n"
@@ -375,11 +333,21 @@ async def get_session_detail_api(thread_id: str) -> dict:
         detail = get_session_detail(thread_id)
         if not detail["messages"]:
             return {"messages": [], "tool_events": [], "turns": []}
-        # 按 HumanMessage 分 turn
+        # 按用户轮次分 turn（兼容 LangChain：type 为 human/ai/tool 或类名）
+        def _is_human(t: str | None) -> bool:
+            return t in ("HumanMessage", "human")
+
+        def _is_ai(t: str | None) -> bool:
+            return t in ("AIMessage", "ai")
+
+        def _is_tool(t: str | None) -> bool:
+            return t in ("ToolMessage", "tool")
+
         turns: list[dict] = []
         current_turn: dict | None = None
         for msg in detail["messages"]:
-            if msg.get("type") == "HumanMessage":
+            mt = msg.get("type")
+            if _is_human(mt):
                 if current_turn:
                     turns.append(current_turn)
                 current_turn = {
@@ -388,9 +356,9 @@ async def get_session_detail_api(thread_id: str) -> dict:
                     "tools": [],
                     "msg_index": len(turns),
                 }
-            elif msg.get("type") == "AIMessage" and current_turn is not None:
+            elif _is_ai(mt) and current_turn is not None:
                 current_turn["assistant"] = msg.get("content", "")
-            elif msg.get("type") == "ToolMessage" and current_turn is not None:
+            elif _is_tool(mt) and current_turn is not None:
                 current_turn["tools"].append({
                     "name": "",
                     "result": msg.get("content", ""),
@@ -422,6 +390,7 @@ async def list_sessions() -> list[SessionSummary]:
     try:
         from src.memory.sqlite_store import list_threads as list_threads_from_db
         threads = list_threads_from_db()
+        logger.info("[H3] list_sessions API called, returning %d sessions", len(threads))
         return [
             SessionSummary(
                 thread_id=t.get("thread_id", ""),
@@ -445,15 +414,129 @@ async def update_session(thread_id: str, req: SessionUpdateRequest) -> dict:
     return {"status": "ok", "thread_id": thread_id}
 
 
+@router.post("/sessions/search", response_model=SessionSearchResponse)
+async def session_search(req: SessionSearchRequest) -> SessionSearchResponse:
+    """
+    对历史会话内容进行关键词 + 语义混合检索（RAG 搜索）。
+    优先从 SQLite checkpoints 提取消息文本做关键词匹配，
+    同时查询 ChromaDB conversation category 做向量相似度补充。
+    """
+    import time
+    t0 = time.monotonic()
+    kw = req.query.lower().strip()
+
+    from src.memory.sqlite_store import list_threads as list_all_threads
+    from src.memory.sqlite_store import get_session_detail as get_sess_detail
+    from src.memory.chroma_store import ChromaMemoryStore
+
+    # ── 1. SQLite 关键词搜索所有会话 ───────────────────────────
+    all_threads = list_all_threads()
+    scored: list[dict] = []
+    for t in all_threads:
+        tid = t.get("thread_id", "")
+        if not tid:
+            continue
+        try:
+            detail = get_sess_detail(tid)
+        except Exception:
+            continue
+
+        msgs = detail.get("messages") or []
+        # 拼接所有消息内容用于搜索
+        msg_texts = []
+        for m in msgs:
+            c = m.get("content", "") or ""
+            if isinstance(c, str) and c.strip():
+                msg_texts.append(c.strip())
+        full_text = "\n".join(msg_texts)
+        title = t.get("title") or ("会话 " + tid[:8])
+
+        if not kw:
+            score = 1.0
+            snippet = msg_texts[0][:200] if msg_texts else ""
+        else:
+            kw_lower = kw
+            title_matches = kw_lower in title.lower()
+            body_matches = kw_lower in full_text.lower()
+            if not body_matches and not title_matches:
+                continue
+            # 优先标题命中，其次正文命中次数
+            snippet_candidates = [ln for ln in msg_texts if kw_lower in ln.lower()]
+            snippet = snippet_candidates[0][:200] if snippet_candidates else (msg_texts[0][:200] if msg_texts else "")
+            score = 2.0 if title_matches else (1.0 + 0.1 * full_text.lower().count(kw_lower))
+
+        scored.append({
+            "thread_id": tid,
+            "title": title,
+            "snippet": snippet,
+            "score": score,
+            "message_count": t.get("message_count", 0) or 0,
+            "updated_at": t.get("updated_at"),
+        })
+
+    # ── 2. ChromaDB 向量搜索（category=conversation）────────────
+    if kw:
+        try:
+            store = ChromaMemoryStore()
+            raw_vec = store.search(query=kw, top_k=req.top_k, category="conversation")
+            for r in raw_vec:
+                sim = float(r.get("similarity", 0))
+                if sim < req.min_score:
+                    continue
+                meta = r.get("metadata") or {}
+                tid = meta.get("thread_id", "")
+                if not tid:
+                    continue
+                # 避免重复（已有关键词结果的覆盖分数）
+                existing = next((x for x in scored if x["thread_id"] == tid), None)
+                if existing:
+                    existing["score"] = max(existing["score"], sim * 10)
+                    if not existing["snippet"]:
+                        existing["snippet"] = r.get("content", "")[:200]
+                else:
+                    scored.append({
+                        "thread_id": tid,
+                        "title": meta.get("title", "") or ("会话 " + tid[:8]),
+                        "snippet": r.get("content", "")[:200],
+                        "score": sim * 10,
+                        "message_count": meta.get("message_count", 0) or 0,
+                        "updated_at": meta.get("updated_at"),
+                    })
+        except Exception:
+            pass  # ChromaDB 不可用时仅用 SQLite 结果
+
+    # ── 3. 排序并返回 Top K ───────────────────────────────────
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    results = [
+        SessionSearchResult(
+            thread_id=x["thread_id"],
+            title=x["title"],
+            snippet=x["snippet"],
+            score_percent=min(round(x["score"] * 10, 1), 100.0),
+            message_count=x["message_count"],
+            updated_at=x["updated_at"],
+        )
+        for x in scored[: req.top_k]
+    ]
+
+    elapsed = int((time.monotonic() - t0) * 1000)
+    return SessionSearchResponse(
+        query=req.query,
+        results=results,
+        total=len(results),
+        elapsed_ms=elapsed,
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  配置与模型切换端点
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/config", response_model=ConfigInfo)
 async def get_config() -> ConfigInfo:
-    """获取当前配置（包含运行时动态值）."""
+    """获取当前配置（包含运行时动态值和动态模型列表）."""
     return ConfigInfo(
-        available_models=AVAILABLE_MODELS,
+        available_models=_build_available_models_response(),
         current_model=get_current_model(),
         user_name=USER_NAME,
         user_tech_stack=USER_TECH_STACK,
@@ -466,10 +549,27 @@ async def get_config() -> ConfigInfo:
 
 @router.post("/model/switch")
 async def model_switch(req: ModelSwitchRequest) -> dict:
-    """动态切换 LLM 模型."""
-    if req.model not in AVAILABLE_MODELS:
+    """动态切换 LLM 模型。支持纯模型名（如 deepseek-chat）或 provider/model 格式（如 claude/claude-3-5-sonnet-20241022）。"""
+    from src.server.dependencies import switch_model as _switch
+
+    # Validate: must exist in some provider
+    all_model_ids = []
+    for pcfg in MODEL_PROVIDERS.values():
+        for m in pcfg.get("default_models", []):
+            all_model_ids.append(m["id"])
+            # Also accept provider/model format
+            all_model_ids.append(f"{p_id}/{m['id']}" for p_id in MODEL_PROVIDERS)
+
+    # Build set of valid model identifiers
+    valid_ids = set()
+    for p_id, pcfg in MODEL_PROVIDERS.items():
+        for m in pcfg.get("default_models", []):
+            valid_ids.add(m["id"])           # deepseek-chat
+            valid_ids.add(f"{p_id}/{m['id']}")  # claude/claude-3-5-sonnet-20241022
+
+    if req.model not in valid_ids:
         raise HTTPException(status_code=400, detail=f"Unknown model: {req.model}")
-    result = switch_model(req.model)
+    result = _switch(req.model)
     return result
 
 
@@ -478,12 +578,51 @@ async def update_model_config(req: ModelConfigRequest) -> dict:
     """更新模型参数（temperature、max_tokens），不影响默认模型."""
     if req.temperature is not None:
         from src.server.dependencies import set_temperature
+
         set_temperature(req.temperature)
     if req.max_tokens is not None:
         from src.server.dependencies import set_max_tokens
+
         set_max_tokens(req.max_tokens)
     logger.info(f"[config] model params updated: temp={req.temperature}, max_tokens={req.max_tokens}")
     return {"status": "ok"}
+
+
+@router.post("/config/keys")
+async def update_api_keys(req: ApiKeysUpdateRequest) -> dict:
+    """
+    更新运行时 API keys（立即生效，清空旧 agent 缓存）。
+
+    注意：API keys 仅存储在内存中，服务重启后会恢复为 .env 中的值。
+    如需持久化，请直接编辑 .env 文件。
+    """
+    from src.config import set_runtime_api_key
+    from src.server.dependencies import _agent_registry
+
+    updates = []
+    if req.deepseek_api_key is not None:
+        set_runtime_api_key("deepseek", req.deepseek_api_key)
+        updates.append("deepseek")
+    if req.anthropic_api_key is not None:
+        set_runtime_api_key("claude", req.anthropic_api_key)
+        updates.append("claude")
+    if req.openai_api_key is not None:
+        set_runtime_api_key("openai", req.openai_api_key)
+        updates.append("openai")
+    if req.openai_base_url is not None:
+        from src.config import RUNTIME_API_KEYS
+        # openai_base_url is not stored in RUNTIME_API_KEYS, store it in a dedicated global
+        import src.config as _cfg
+        _cfg.OPENAI_BASE_URL = req.openai_base_url
+        updates.append("openai_base_url")
+    if req.google_api_key is not None:
+        set_runtime_api_key("gemini", req.google_api_key)
+        updates.append("gemini")
+
+    # Clear agent cache so new agents use the updated keys
+    _agent_registry.clear()
+    logger.info(f"[config] API keys updated for: {updates}")
+    return {"status": "ok", "updated": updates}
 
 
 @router.post("/cost/reset")
@@ -540,25 +679,26 @@ async def get_cost() -> CostReport:
 async def get_cost_history(days: int = 7) -> CostHistoryReport:
     """获取 Token 成本历史."""
     entries = _token_tracker.get_history(days=days)
+    model_entries = [
+        CostHistoryEntry(
+            timestamp=e.get("timestamp", ""),
+            date=e.get("date", ""),
+            prompt_tokens=e.get("prompt_tokens", 0),
+            completion_tokens=e.get("completion_tokens", 0),
+            total_tokens=e.get("total_tokens", 0),
+            num_calls=e.get("num_calls", 0),
+            cost_usd=e.get("cost_usd", 0.0),
+            model=e.get("model", ""),
+        )
+        for e in entries
+    ]
     return CostHistoryReport(
-        entries=[
-            CostHistoryEntry(
-                timestamp=e.get("timestamp", ""),
-                date=e.get("date", ""),
-                prompt_tokens=e.get("prompt_tokens", 0),
-                completion_tokens=e.get("completion_tokens", 0),
-                total_tokens=e.get("total_tokens", 0),
-                num_calls=e.get("num_calls", 0),
-                cost_usd=e.get("cost_usd", 0.0),
-                model=e.get("model", ""),
-            )
-            for e in entries
-        ],
-        total_cost_usd=sum(e.cost_usd for e in entries),
-        total_tokens=sum(e.total_tokens for e in entries),
-        total_calls=sum(e.num_calls for e in entries),
-        period_start=entries[-1].date if entries else "",
-        period_end=entries[0].date if entries else "",
+        entries=model_entries,
+        total_cost_usd=sum(e.cost_usd for e in model_entries),
+        total_tokens=sum(e.total_tokens for e in model_entries),
+        total_calls=sum(e.num_calls for e in model_entries),
+        period_start=model_entries[-1].date if model_entries else "",
+        period_end=model_entries[0].date if model_entries else "",
     )
 
 
@@ -993,7 +1133,9 @@ async def kb_search(req: KbSearchRequest) -> KbSearchResponse:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Crayfish 多 Agent 编排端点 (SSE 流式)
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Crayfish 多 Agent 编排端点 — 后台任务模式
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  POST /orchestrate        → 创建任务，立即返回 job_id
 #  GET  /orchestrate/jobs   → 列表
 #  GET  /orchestrate/jobs/{id}             → 状态 + 结果
@@ -1050,7 +1192,29 @@ async def orchestrate(req: OrchestrateRequest) -> dict:
     job.kanban_task_id = kanban_task["id"]
 
     # 立即返回 job_id，不阻塞
+    _SHUTDOWN_TRACKER["pending_tasks"] += 1
+    if _SHUTDOWN_TRACKER["pending_tasks"] > _SHUTDOWN_TRACKER["max_pending"]:
+        _SHUTDOWN_TRACKER["max_pending"] = _SHUTDOWN_TRACKER["pending_tasks"]
+    logger.info(f"[orchestrate] +1 pending tasks={_SHUTDOWN_TRACKER['pending_tasks']}, max={_SHUTDOWN_TRACKER['max_pending']}")
     asyncio.create_task(_run_orchestrator_job(job))
+
+    # 任务完成后自动减少计数
+    async def _track_done():
+        await asyncio.sleep(0.1)  # 让任务有时间启动
+        # 检查任务是否完成
+        import time
+        deadline = time.monotonic() + 600  # 10分钟超时
+        while time.monotonic() < deadline:
+            j = job_mgr.get_job(job.job_id)
+            if j and j.status.value in ("done", "failed", "cancelled"):
+                _SHUTDOWN_TRACKER["pending_tasks"] -= 1
+                logger.info(f"[orchestrate] -1 pending tasks={_SHUTDOWN_TRACKER['pending_tasks']}, job_id={job.job_id}")
+                return
+            await asyncio.sleep(1)
+        _SHUTDOWN_TRACKER["pending_tasks"] -= 1
+        logger.warning(f"[orchestrate] timeout cleanup, pending tasks={_SHUTDOWN_TRACKER['pending_tasks']}")
+
+    asyncio.create_task(_track_done())
 
     logger.info(f"[orch_jobs] created job {job.job_id} -> kanban {kanban_task['id']}: {req.requirement[:60]}...")
     return {

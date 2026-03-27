@@ -26,6 +26,9 @@
 | **Python** | **3.11+** | 必须，LangGraph/LangChain 生态要求 |
 | conda | 任意版本 | 用于创建和管理 Python 环境 |
 | DeepSeek API Key | 有效密钥 | 用于 LLM 对话能力 |
+| Anthropic API Key | 可选 | 用于 Claude 模型 |
+| OpenAI API Key | 可选 | 用于 GPT-4o 等模型 |
+| Google API Key | 可选 | 用于 Gemini 模型 |
 | Tavily API Key | 可选 | 用于网页搜索工具 |
 | LangSmith API Key | 可选 | 用于链路追踪和监控 |
 
@@ -136,7 +139,27 @@ playwright install chromium --with-deps
 4. 点击 **Create API Key**，复制生成的密钥
 5. 格式类似：`sk-e2bc13304a6249cf956a369a21c18b2c`
 
-> ⚠️ 请勿将真实 API Key 上传至公开仓库！`.env` 文件已被 `.gitignore` 忽略。
+> 注意：DeepSeek API Key 是必须的，系统启动时会检查。若暂不配置其他模型，先只填这一项即可使用。
+
+#### Anthropic API Key（可选，用于 Claude 模型）
+
+1. 访问 [Anthropic Console](https://console.anthropic.com/)
+2. 注册后进入 **API Keys** 页面
+3. 创建密钥后复制
+4. 在设置页面输入后，对应模型变为可选
+
+#### OpenAI API Key（可选，用于 GPT-4o 等模型）
+
+1. 访问 [OpenAI Platform](https://platform.openai.com/)
+2. 进入 **API Keys** 页面创建密钥
+3. 若使用代理或第三方兼容接口，可在设置中填写自定义 `base_url`
+4. 在设置页面输入后，对应模型变为可选
+
+#### Google API Key（可选，用于 Gemini 模型）
+
+1. 访问 [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. 创建 API Key 后复制
+3. 在设置页面输入后，对应模型变为可选
 
 #### Tavily API Key（可选，用于网页搜索）
 
@@ -163,6 +186,12 @@ copy .env.example .env
 # ===== 必须填写 =====
 DEEPSEEK_API_KEY=sk-your-deepseek-api-key-here
 
+# ===== 可选填写（多模型支持）=====
+ANTHROPIC_API_KEY=sk-ant-your-anthropic-api-key-here
+OPENAI_API_KEY=sk-your-openai-api-key-here
+OPENAI_BASE_URL=https://api.openai.com/v1
+GOOGLE_API_KEY=your-google-api-key-here
+
 # ===== 可选填写 =====
 TAVILY_API_KEY=tvly-your-tavily-api-key-here
 LANGSMITH_API_KEY=your-langsmith-api-key-here
@@ -184,6 +213,10 @@ CHECKPOINT_PATH=./data/checkpointer/checkpoints.db
 | 配置项 | 必须 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `DEEPSEEK_API_KEY` | ✅ | - | DeepSeek API 密钥 |
+| `ANTHROPIC_API_KEY` | ❌ | 空 | Anthropic API 密钥（Claude 模型） |
+| `OPENAI_API_KEY` | ❌ | 空 | OpenAI API 密钥（GPT-4o 等） |
+| `OPENAI_BASE_URL` | ❌ | `https://api.openai.com/v1` | OpenAI 兼容端点（支持代理） |
+| `GOOGLE_API_KEY` | ❌ | 空 | Google API 密钥（Gemini 模型） |
 | `TAVILY_API_KEY` | ❌ | 空 | 网页搜索（可选） |
 | `LANGSMITH_API_KEY` | ❌ | 空 | 链路追踪（可选） |
 | `DEFAULT_MODEL` | ❌ | `deepseek-chat` | 模型名称 |
@@ -330,10 +363,19 @@ D:\Aprogress\Langchain\
 
 ### 1. LLM 模块 (`src/llm/`)
 
-DeepSeek API 的调用封装，支持流式输出。核心功能：
-- 初始化 DeepSeek Chat 模型
+支持多 Provider 模型调用（DeepSeek / Claude / OpenAI / Gemini），核心功能：
+- 初始化各 Provider 的 Chat 模型
 - 构建系统 Prompt
 - 流式响应处理
+
+| 文件 | Provider | 说明 |
+|------|----------|------|
+| `deepseek_client.py` | DeepSeek | OpenAI 兼容端点（V3 / R1） |
+| `claude_client.py` | Anthropic | Claude 3.5 Sonnet / Haiku / Opus |
+| `openai_client.py` | OpenAI | GPT-4o / GPT-4o Mini / GPT-4 Turbo |
+| `google_client.py` | Google | Gemini 2.0 Flash / 1.5 Flash / 1.5 Pro |
+
+> **动态模型切换**：模型字符串格式为 `provider/model`（如 `claude/claude-3-5-sonnet-20241022`），后端根据前缀自动路由到对应 LLM 客户端并缓存 Agent 实例。
 
 ### 2. 工具模块 (`src/tools/`)
 
@@ -425,14 +467,24 @@ LangSmith 集成，实时追踪：
 
 | 页面 | 路径 | 功能 |
 |------|------|------|
-| 首页仪表盘 | `/` | 系统概览、快速入口 |
+| 首页仪表盘 | `/` | 系统概览、快速入口、模型切换下拉框 |
 | 智能体管理 | `/agents` | 查看和管理 AI 智能体 |
 | 任务管理 | `/tasks` | 创建、监控、终止任务 |
 | 会话历史 | `/sessions` | 查看历史对话记录 |
 | 知识库 | `/kb` | 文档管理和 RAG 配置 |
 | 任务编排 | `/orchestrate` | 可视化编排多步骤任务 |
-| 系统设置 | `/settings` | API 密钥、模型参数配置 |
+| 系统设置 | `/settings` | API 密钥管理、模型参数配置 |
 | 成本统计 | `/costs` | Token 使用量和成本报告 |
+
+### 多模型支持与运行时切换
+
+系统支持 DeepSeek（默认）、Claude（Anthropic）、OpenAI（GPT-4o）、Gemini（Google）四大模型族。在 **设置页面** 可：
+
+1. **查看 Provider 状态** — 每个 Provider 显示绿色圆点（已配置 API Key）或灰色圆点（未配置）
+2. **配置 API Key** — 在对应输入框中填入 Key，保存后立即生效（无需重启服务）
+3. **切换当前模型** — 工具栏下拉框动态显示所有已配置 Provider 的模型，选择后即时切换
+
+> **模型标识格式**：`provider/model`，例如 `claude/claude-3-5-sonnet-20241022`、`deepseek-chat`（DeepSeek 可省略前缀）。Key 仅存储在服务器内存中，服务重启后会恢复为 `.env` 中的值。
 
 ---
 
@@ -445,6 +497,10 @@ LangSmith 集成，实时追踪：
 | 方法 | 路径 | 功能 |
 |------|------|------|
 | POST | `/api/chat` | 发送对话消息 |
+| POST | `/api/model/switch` | 动态切换 LLM 模型（支持 `provider/model` 格式） |
+| GET | `/api/config` | 获取当前配置（含可用模型列表，按 Provider 分组） |
+| POST | `/api/config/keys` | 更新运行时 API Key（立即生效） |
+| POST | `/api/config/model` | 更新模型参数（Temperature、MaxTokens） |
 | POST | `/api/orchestrate` | 创建编排任务 |
 | GET | `/api/tasks` | 获取任务列表 |
 | GET | `/api/tasks/{id}` | 获取任务详情 |
@@ -525,7 +581,19 @@ del /f data\checkpointer\checkpoints.db
 del /f data\chroma_db\*.sqlite 2>nul /s
 ```
 
-### Q7: 任务执行失败或卡住
+### Q7: 如何切换到其他模型（如 Claude / GPT-4o / Gemini）？
+
+**方法一（推荐 — 运行时配置）**：
+1. 进入 **设置页面** → **API Keys & Models** 区块
+2. 在对应 Provider 的输入框中填入 API Key，点击「保存设置」
+3. 圆点变为绿色后，在工具栏模型下拉框中选择目标模型即可
+
+**方法二（永久配置）**：
+直接在 `.env` 文件中添加对应 Key，然后重启服务。
+
+> 支持的模型列表见 [LLM 模块说明](#1-llm-模块-srcllm)。
+
+### Q8: 任务执行失败或卡住
 
 **解决**：
 1. 在任务管理页面查看错误详情
@@ -547,4 +615,4 @@ del /f data\chroma_db\*.sqlite 2>nul /s
 
 ---
 
-*文档最后更新：2026-03-27*
+*文档最后更新：2026-03-28*

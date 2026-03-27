@@ -130,6 +130,18 @@
     .msg-bub code { font-family: var(--font-mono); font-size: 12px; background: rgba(0,0,0,0.2); padding: 2px 5px; border-radius: 4px; }
     .msg-bub pre code { background: transparent; padding: 0; }
 
+    /* Markdown 无序列表扁平渲染（与 shared.js md-ul-flat 配套，避免阶梯缩进） */
+    .msg-bub ul.md-ul-flat {
+      margin: 0.5em 0;
+      padding-left: 1.15em;
+      list-style-position: outside;
+    }
+    .msg-bub li.md-li-flat {
+      margin: 0.25em 0;
+      display: list-item;
+      list-style-type: disc;
+    }
+
     .loading-dots { display: inline-flex; gap: 4px; padding: 4px 0; }
     .loading-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); animation: dotPulse 1.2s ease-in-out infinite; }
     .loading-dots span:nth-child(2) { animation-delay: 0.15s; }
@@ -466,9 +478,9 @@ var CHAT_CONTENT = [
       '<div class="chat-toolbar">',
         '<div class="toolbar-left">',
           '<span class="toolbar-stat" id="stat-indicator"><span class="dot"></span><span id="stat-text">空闲</span></span>',
+          // Model dropdown — options are built dynamically via loadConfig()
           '<select class="model-select" id="chat-model-select" title="切换模型">',
-            '<option value="deepseek-chat">V3</option>',
-            '<option value="deepseek-reasoner">R1</option>',
+            '<option value="">加载中...</option>',
           '</select>',
         '</div>',
         '<div class="toolbar-right">',
@@ -556,7 +568,11 @@ var CHAT_CONTENT = [
 function chatOnShow(savedState) {
   var sel = document.getElementById('chat-model-select');
   if (sel) {
-    sel.value = G.model;
+    // Build dropdown options from G.config (set by loadConfig in initPage)
+    if (G.config && G.config.available_models) {
+      sel.innerHTML = buildModelSelectOptions(G.config.available_models, G.model);
+    }
+    sel.value = G.model || 'deepseek-chat';
     sel.addEventListener('change', function(e) {
       var m = e.target.value;
       if (m === G.model) return;
@@ -565,8 +581,13 @@ function chatOnShow(savedState) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({model: m})
       }).then(function(r) {
-        if (r.ok) { G.model = m; toast('模型已切换'); renderHeader(_SPA.currentPath || '/'); }
-        else toast('切换失败', 'error');
+        if (r.ok) {
+          G.model = m;
+          toast('模型已切换');
+          renderHeader(_SPA.currentPath || '/');
+        } else {
+          toast('切换失败', 'error');
+        }
       }).catch(function() { toast('切换失败', 'error'); });
     });
   }
@@ -609,31 +630,12 @@ function chatOnShow(savedState) {
 
 // ── 从服务器加载历史消息并渲染 ─────────────────────────────────
 function loadChatHistory() {
-  if (!G.threadId) {
-    // #region DBG-loadChatHistory-no-thread
-    fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1',location:'index.html:loadChatHistory',message:'H1-NO-THREAD: G.threadId is empty, skipping',data:{threadId:G.threadId},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
-    // #endregion
-    return;
-  }
-  // #region DBG-loadChatHistory-request
-  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1_req',location:'index.html:loadChatHistory',message:'H1-REQ: fetching session detail',data:{threadId:G.threadId},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
-  // #endregion
+  if (!G.threadId) return;
   fetch('/api/session/' + encodeURIComponent(G.threadId) + '/detail').then(function(r) {
-    // #region DBG-loadChatHistory-status
-    fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1_resp',location:'index.html:loadChatHistory',message:'H1-RESP: HTTP status',data:{status:r.status,ok:r.ok},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
-    // #endregion
     if (!r.ok) return null;
     return r.json();
   }).then(function(data) {
-    // #region DBG-loadChatHistory-data
-    fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1_data',location:'index.html:loadChatHistory',message:'H1-DATA: API response structure',data:{hasData:!!data,messagesLen:data?data.messages.length:0,toolEventsLen:data?data.tool_events.length:0,turnsLen:data?data.turns.length:0,firstTurnHasAssistant:data&&data.turns&&data.turns[0]?!!data.turns[0].assistant:false,firstTurnToolsLen:data&&data.turns&&data.turns[0]?data.turns[0].tools.length:0},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
-    // #endregion
-    if (!data || !data.turns || !data.turns.length) {
-      // #region DBG-loadChatHistory-empty
-      fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1_empty',location:'index.html:loadChatHistory',message:'H1-EMPTY: no turns in response',data:{threadId:G.threadId},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
-      // #endregion
-      return;
-    }
+    if (!data || !data.turns || !data.turns.length) return;
     var box = document.getElementById('chat-msgs');
     if (!box) return;
 
@@ -828,17 +830,11 @@ function chatSend() {
               if (aiBub) aiBub.innerHTML = md(full) + '<div class="loading-dots" style="margin-top:6px"><span></span><span></span><span></span></div>';
               scrollBot(document.getElementById('chat-msgs'));
             } else if (d.type === 'tool') {
-              // #region DBG-SSE-tool
-              fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_SSE_tool',location:'index.html:chatSend',message:'SSE-TOOL: received tool event',data:{name:d.name,fullLen:full.length},timestamp:Date.now(),runId:'debug',hypothesisId:'H4'})}).catch(function(){});
-              // #endregion
               ensureTaskBlock();
               chatAddToolCard(d.name, d.input, d.result);
             } else if (d.type === 'tool_result') {
               updateToolCardResult(d.name, d.result);
             } else if (d.type === 'done') {
-              // #region DBG-SSE-done
-              fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_SSE_done',location:'index.html:chatSend',message:'SSE-DONE: stream completed',data:{fullLen:full.length,fullFirst50:full.slice(0,50),GtoolsLen:G.tools.length},timestamp:Date.now(),runId:'debug',hypothesisId:'H3'})}).catch(function(){});
-              // #endregion
               if (aiBub) aiBub.innerHTML = md(full);
               G.msgs.push({role: 'assistant', content: full});
               loadChatMem();

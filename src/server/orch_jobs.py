@@ -212,6 +212,9 @@ async def _run_orchestrator_job(job: BackgroundJob) -> None:
         })
         await _sync_kanban("failed", error=str(e))
         logger.error(f"[orch_jobs] job {job.job_id} failed: {e}", exc_info=True)
+    finally:
+        # Log job completion
+        logger.info(f"[orch_jobs] job {job.job_id} finished with status {job.status.value}")
 
 
 def _update_worker_state(job: BackgroundJob, ev_type: str, event: dict) -> None:

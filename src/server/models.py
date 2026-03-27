@@ -34,8 +34,8 @@ class MemorySaveRequest(BaseModel):
 
 
 class ConfigInfo(BaseModel):
-    """GET /api/config 返回的当前配置."""
-    available_models: list[str]
+    """GET /api/config 返回的当前配置（供前端初始化下拉框）."""
+    available_models: list[dict]  # [{provider_id, provider_name, models: [{id, name, description}], configured: bool}]
     current_model: str
     user_name: str
     user_tech_stack: list[str]
@@ -284,6 +284,31 @@ class DocumentChunkItem(BaseModel):
     text: str
 
 
+class SessionSearchRequest(BaseModel):
+    """POST /api/sessions/search 的请求体."""
+    query: str = Field(..., description="检索查询文本")
+    top_k: int = Field(default=8, ge=1, le=20, description="最多返回条数")
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0, description="最低相似度阈值（0-1）")
+
+
+class SessionSearchResult(BaseModel):
+    """单条搜索结果."""
+    thread_id: str
+    title: str
+    snippet: str = Field(description="命中的对话片段")
+    score_percent: float = Field(description="0-100 百分制相似度")
+    message_count: int
+    updated_at: str | None = None
+
+
+class SessionSearchResponse(BaseModel):
+    """POST /api/sessions/search 响应."""
+    query: str
+    results: list[SessionSearchResult]
+    total: int
+    elapsed_ms: int
+
+
 class DocumentPreviewResponse(BaseModel):
     """GET /api/documents/{id}/preview — 文档分块原文预览."""
     document: Document
@@ -297,6 +322,15 @@ AgentTaskHistory.model_rebuild()
 # ═══════════════════════════════════════════════════════════════════════════════
 #  任务编排 (Crayfish Multi-Agent)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+class ApiKeysUpdateRequest(BaseModel):
+    """POST /api/config/keys 的请求体 — 更新 API keys（运行时生效）."""
+    deepseek_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    google_api_key: Optional[str] = None
+
 
 class OrchestrateRequest(BaseModel):
     """POST /api/orchestrate 的请求体."""

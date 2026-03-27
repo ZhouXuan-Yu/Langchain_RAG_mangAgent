@@ -136,6 +136,11 @@ def build_react_agent(
     """
     构建轻量级 ReAct Agent — 基于 create_react_agent（用于快速验证 01-06 阶段）.
 
+    对话策略：
+    - 当 state 中最后一条为 HumanMessage 时，bind_tools(..., tool_choice=\"required\")，
+      强制本轮至少调用一个工具（满足「每轮先检索/再回答」）。
+    - 工具返回后最后一条为 ToolMessage，使用 tool_choice=\"auto\"，允许模型继续多轮工具或输出最终答复。
+
     Args:
         llm: LangChain LLM
         checkpointer: SqliteSaver
@@ -145,6 +150,7 @@ def build_react_agent(
     Returns:
         ReAct Agent Executor
     """
+    from langchain_core.messages import HumanMessage
     from langgraph.prebuilt import create_react_agent
 
     tools = [
@@ -157,16 +163,25 @@ def build_react_agent(
         process_image,
     ]
 
-    # pre_model_hook 同时做 PII 脱敏 + 工具参数验证
     pre_hook = pii_pre_model_hook if enable_middleware else None
 
+    def _bound_model_for_turn(state: Any, runtime: Any) -> Any:
+        msgs = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
+        last = msgs[-1] if msgs else None
+        tool_choice = "required" if isinstance(last, HumanMessage) else "auto"
+        try:
+            return llm.bind_tools(tools, tool_choice=tool_choice, parallel_tool_calls=True)
+        except Exception as e:
+            logger.warning("[react_agent] bind_tools(tool_choice=%s) failed: %s; fallback auto", tool_choice, e)
+            return llm.bind_tools(tools, tool_choice="auto")
+
     agent = create_react_agent(
-        llm,
+        _bound_model_for_turn,
         tools=tools,
         checkpointer=checkpointer,
         prompt=system_prompt or None,
         pre_model_hook=pre_hook,
     )
 
-    logger.info("[react_agent] compiled successfully")
+    logger.info("[react_agent] compiled (dynamic tool_choice: HumanMessage→required, else→auto)")
     return agent

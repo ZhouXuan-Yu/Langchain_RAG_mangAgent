@@ -7,6 +7,39 @@
   <script src="/lib/shared.js"></script>
   <style>
     body { background: var(--bg); }
+    #main-content .settings-page {
+      width: 75%;
+      max-width: none;
+      margin: 0 auto;
+      padding: 20px 0 32px;
+      box-sizing: border-box;
+    }
+    #main-content .settings-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px 40px;
+      align-items: start;
+    }
+    #main-content .settings-col {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      min-width: 0;
+    }
+    #main-content .settings-section {
+      margin-bottom: 0;
+    }
+    #main-content .settings-actions {
+      margin-top: 28px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+    }
+    @media (max-width: 900px) {
+      #main-content .settings-page { width: 92%; }
+      #main-content .settings-columns { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body class="glass-theme">
@@ -20,12 +53,24 @@
 // ── 设置页内容模板 ─────────────────────────────────────────────
 var SETTINGS_CONTENT = [
   '<div class="settings-page">',
+    '<div class="settings-columns">',
+    '<div class="settings-col">',
+
+    // ── API Keys & Models ─────────────────────────────────────
+    '<div class="settings-section" id="section-api-keys">',
+      '<div class="settings-section-title">API Keys & Models</div>',
+      '<div id="api-keys-list"></div>',
+      '<div style="margin-top:12px;padding:10px 12px;background:var(--elevated);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px;color:var(--muted)">',
+        '配置说明：在此输入 API Key 后，对应模型会变为可用状态（绿色）。',
+        'Key 仅存储在服务器内存中，服务重启后会恢复为 .env 中的值。',
+      '</div>',
+    '</div>',
+
+    // ── 模型配置 ────────────────────────────────────────────
     '<div class="settings-section">',
       '<div class="settings-section-title">模型配置</div>',
-      '<div class="setting-row"><div class="setting-info"><div class="setting-name">默认模型</div><div class="setting-desc">对话使用的默认模型</div></div>',
-        '<select class="form-select" id="cfg-model" style="width:180px">',
-          '<option value="deepseek-chat">DeepSeek V3</option><option value="deepseek-reasoner">DeepSeek R1</option>',
-        '</select></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">默认模型</div><div class="setting-desc">对话使用的模型（需先在左侧配置对应 API Key）</div></div>',
+        '<select class="form-select" id="cfg-model" style="width:200px"></select></div>',
       '<div class="setting-row"><div class="setting-info"><div class="setting-name">Temperature</div><div class="setting-desc">控制回答随机性（0=确定，1=创意）</div></div>',
         '<div style="display:flex;align-items:center;gap:8px">',
           '<span id="temp-val" style="font-size:12px;font-family:var(--font-mono);color:var(--muted);min-width:30px">0.7</span>',
@@ -34,6 +79,8 @@ var SETTINGS_CONTENT = [
       '<div class="setting-row"><div class="setting-info"><div class="setting-name">最大输出 Token</div><div class="setting-desc">单次回答的最大 Token 数量</div></div>',
         '<input type="number" class="form-input" id="cfg-maxtokens" style="width:120px" value="8000"></div>',
     '</div>',
+
+    // ── 用户信息 ────────────────────────────────────────────
     '<div class="settings-section">',
       '<div class="settings-section-title">用户信息</div>',
       '<div class="setting-row"><div class="setting-info"><div class="setting-name">用户名</div><div class="setting-desc">Agent 对你的称呼</div></div>',
@@ -43,6 +90,9 @@ var SETTINGS_CONTENT = [
       '<div class="setting-row"><div class="setting-info"><div class="setting-name">硬件配置</div><div class="setting-desc">你的电脑配置（用于代码优化建议）</div></div>',
         '<input type="text" class="form-input" id="cfg-hardware" style="width:180px" placeholder="RTX 5060, ..."></div>',
     '</div>',
+    '</div>',
+
+    '<div class="settings-col">',
     '<div class="settings-section">',
       '<div class="settings-section-title">系统偏好</div>',
       '<div class="setting-row"><div class="setting-info"><div class="setting-name">默认主题</div><div class="setting-desc">界面外观风格</div></div>',
@@ -66,9 +116,11 @@ var SETTINGS_CONTENT = [
       '<div class="setting-row"><div class="setting-info"><div class="setting-name">版本</div><div class="setting-desc">Langchain_RAG</div></div>',
         '<span style="font-size:12px;font-family:var(--font-mono);color:var(--muted)">v1.0.0</span></div>',
       '<div class="setting-row"><div class="setting-info"><div class="setting-name">技术栈</div><div class="setting-desc">DeepSeek + LangGraph + ChromaDB + FastAPI</div></div></div>',
-      '<div class="setting-row"><div class="setting-info"><div class="setting-name">开发者</div><div class="setting-desc">周暄</div></div></div>',
+      '<div class="setting-row"><div class="setting-info"><div class="setting-name">开发者</div><div class="setting-desc">周轩</div></div></div>',
     '</div>',
-    '<div style="margin-top:24px;display:flex;gap:8px">',
+    '</div>',
+    '</div>',
+    '<div class="settings-actions">',
       '<button class="btn btn-primary" onclick="settingsSave()" style="background:var(--elevated);border-color:var(--border-h);color:var(--text);padding:10px 20px;border-radius:8px">保存设置</button>',
     '</div>',
   '</div>'
@@ -85,10 +137,15 @@ function settingsOnShow(savedState) {
   }
   loadConfig(function(c) {
     if (!c) return;
-    var el = document.getElementById('cfg-model');
-    if (el) el.value = c.current_model || 'deepseek-chat';
+
+    // ── 动态构建 API Keys 列表 ────────────────────────────────
+    buildApiKeysSection(c.available_models || []);
+
+    // ── 动态构建模型下拉框 ──────────────────────────────────
+    buildModelSelect(c.available_models || [], c.current_model || 'deepseek-chat');
+
     var tv = (c.temperature || 0.7).toFixed(1);
-    el = document.getElementById('temp-val');
+    var el = document.getElementById('temp-val');
     if (el) el.textContent = tv;
     el = document.getElementById('temp-slider');
     if (el) el.value = Math.round((c.temperature || 0.7) * 100);
@@ -104,6 +161,72 @@ function settingsOnShow(savedState) {
     if (el) el.value = localStorage.getItem('rag_theme') || 'glass';
     el = document.getElementById('cfg-maxtokens-ctx');
     if (el) el.value = c.max_context_tokens || 8000;
+  });
+}
+
+function buildApiKeysSection(providers) {
+  var container = document.getElementById('api-keys-list');
+  if (!container) return;
+
+  var providerKeyField = {
+    deepseek: 'deepseek_api_key',
+    claude:   'anthropic_api_key',
+    openai:   'openai_api_key',
+    gemini:   'google_api_key',
+  };
+
+  var providerPlaceholder = {
+    deepseek: 'sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    claude:   'sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    openai:   'sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    gemini:   'AIzaSyxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  };
+
+  var html = '';
+  providers.forEach(function(p) {
+    var isConfigured = p.configured;
+    var dotColor = isConfigured ? '#4ade80' : '#6b7280';
+    var statusText = isConfigured ? '已配置' : '未配置';
+    var dotClass = isConfigured ? 'model-dot configured' : 'model-dot';
+    var pKey = providerKeyField[p.provider_id] || '';
+
+    html += '<div style="margin-bottom:14px;padding:12px;background:var(--elevated);border:1px solid var(--border);border-radius:var(--radius-sm)">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+    html += '<div style="display:flex;align-items:center;gap:8px">';
+    html += '<span style="width:8px;height:8px;border-radius:50%;background:' + dotColor + ';flex-shrink:0" id="apikey-dot-' + p.provider_id + '"></span>';
+    html += '<span style="font-size:13px;font-weight:500;color:var(--text)">' + esc(p.provider_name) + '</span>';
+    html += '</div>';
+    html += '<span style="font-size:11px;color:var(--muted)" id="apikey-status-' + p.provider_id + '">' + statusText + '</span>';
+    html += '</div>';
+
+    // Model list
+    html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">';
+    p.models.forEach(function(m) {
+      html += '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--muted)">' + esc(m.name) + '</span>';
+    });
+    html += '</div>';
+
+    // API Key input
+    html += '<input type="password" id="apikey-' + p.provider_id + '" placeholder="输入 ' + p.provider_name + ' API Key..." style="width:100%;box-sizing:border-box;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;font-family:var(--font-mono);outline:none" onfocus="this.style.borderColor=\'var(--border-h)\'" onblur="this.style.borderColor=\'var(--border)\'">';
+    html += '</div>';
+  });
+  container.innerHTML = html;
+}
+
+function buildModelSelect(providers, currentModel) {
+  var el = document.getElementById('cfg-model');
+  if (!el) return;
+  el.innerHTML = '';
+  providers.forEach(function(p) {
+    if (!p.configured) return;  // Only show configured providers
+    p.models.forEach(function(m) {
+      var modelId = p.provider_id + '/' + m.id;
+      var opt = document.createElement('option');
+      opt.value = modelId;
+      opt.textContent = p.provider_name + ': ' + m.name;
+      if (modelId === currentModel || m.id === currentModel) opt.selected = true;
+      el.appendChild(opt);
+    });
   });
 }
 
@@ -129,20 +252,60 @@ function settingsSave() {
   var temperature = tempEl ? parseFloat((tempEl.value / 100).toFixed(1)) : 0.7;
   var maxTokens = maxTokensEl ? parseInt(maxTokensEl.value) : 8000;
 
-  // 保存模型参数（temperature、max_tokens）
-  fetch('/api/config/model', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({temperature: temperature, max_tokens: maxTokens})
-  }).then(function(r) {
-    if (r.ok) {
-      // 更新前端显示
-      var tv = document.getElementById('temp-val');
-      if (tv) tv.textContent = temperature.toFixed(1);
-      toast('设置已保存（模型参数已更新）');
-    } else {
-      toast('保存失败', 'error');
+  // ── Save API Keys ──────────────────────────────────────────
+  var providerKeyField = {
+    deepseek: 'deepseek_api_key',
+    claude:   'anthropic_api_key',
+    openai:   'openai_api_key',
+    gemini:   'google_api_key',
+  };
+
+  var keysPayload = {};
+  var keyUpdated = false;
+  Object.keys(providerKeyField).forEach(function(pid) {
+    var input = document.getElementById('apikey-' + pid);
+    if (input && input.value && input.value.trim()) {
+      keysPayload[providerKeyField[pid]] = input.value.trim();
+      keyUpdated = true;
     }
+  });
+
+  var promises = [];
+
+  if (keyUpdated) {
+    promises.push(
+      fetch('/api/config/keys', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(keysPayload)
+      }).then(function(r) {
+        if (!r.ok) throw new Error('API key save failed');
+        return r.json();
+      }).then(function(data) {
+        // Update dot indicators
+        (data.updated || []).forEach(function(pid) {
+          var dot = document.getElementById('apikey-dot-' + pid);
+          var status = document.getElementById('apikey-status-' + pid);
+          if (dot) dot.style.background = '#4ade80';
+          if (status) status.textContent = '已配置';
+        });
+      })
+    );
+  }
+
+  // ── Save model params ──────────────────────────────────────
+  promises.push(
+    fetch('/api/config/model', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({temperature: temperature, max_tokens: maxTokens})
+    }).then(function(r) { return r.ok ? r.json() : Promise.reject(); })
+  );
+
+  Promise.all(promises).then(function() {
+    var tv = document.getElementById('temp-val');
+    if (tv) tv.textContent = temperature.toFixed(1);
+    toast('设置已保存');
   }).catch(function() {
     toast('保存失败', 'error');
   });

@@ -107,6 +107,32 @@
 </div>
 
 <script>
+(function() {
+  var css = [
+    '.sessions-list { width: 75%; max-width: none; margin: 0 auto; padding: 20px 0 32px; box-sizing: border-box; }',
+    '.session-item { margin-bottom: 8px; }',
+    '.session-card { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-radius: var(--radius-md); background: var(--surface); border: 1px solid var(--border); transition: border-color 150ms, background 150ms; }',
+    '.session-card:hover { border-color: var(--border-h); background: var(--elevated); }',
+    '.session-card-info { flex: 1; min-width: 0; }',
+    '.session-card-title { font-size: 13px; color: var(--text); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }',
+    '.session-card-meta { font-size: 11px; font-family: var(--font-mono); color: var(--muted); }',
+    '.session-card-rag { margin-top: 3px; font-size: 11px; font-family: var(--font-mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
+    '.session-card-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: 8px; }',
+    '.session-btn { padding: 5px; border-radius: 6px; background: transparent; border: 1px solid transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--muted); transition: all 150ms; }',
+    '.session-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.5; }',
+    '.session-btn:hover { color: var(--text); background: var(--elevated); border-color: var(--border); }',
+    '.session-btn.delete:hover { color: #c0392b; background: rgba(139,0,0,0.1); border-color: rgba(139,0,0,0.3); }',
+    '.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 0; color: var(--muted); gap: 12px; }',
+    '.empty-state svg { width: 40px; height: 40px; stroke: currentColor; fill: none; stroke-width: 1; opacity: 0.4; }',
+    '.empty-state p { font-size: 13px; margin: 0; }',
+    '@media (max-width: 900px) { .sessions-list { width: 92%; } }',
+  ].join('\n');
+  var s = document.createElement('style');
+  s.textContent = css;
+  document.head.appendChild(s);
+})();
+</script>
+<script>
 // ── 内容模板 ──────────────────────────────────────────────────
 var SESSIONS_CONTENT = [
   '<div class="sessions-list">',
@@ -115,13 +141,17 @@ var SESSIONS_CONTENT = [
       '<button class="btn" onclick="chatResetSession()" style="background:var(--elevated);border-color:var(--border-h);color:var(--text);padding:8px 16px;border-radius:8px">+ 新建会话</button>',
     '</div>',
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">',
-      '<input type="text" class="search-input" id="session-search" placeholder="搜索会话标题或内容..." oninput="filterSessions()" style="flex:1;background:var(--elevated);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:9px 14px;font-size:13px;font-family:var(--font-sans);outline:none;transition:border-color 150ms">',
+      '<div style="position:relative;flex:1">',
+        '<input type="text" class="search-input" id="session-search" placeholder="搜索会话（输入后回车或点 RAG 搜索）..." style="width:100%;background:var(--elevated);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:9px 80px 9px 14px;font-size:13px;font-family:var(--font-sans);outline:none;box-sizing:border-box;transition:border-color 150ms" onkeydown="if(event.key===\'Enter\')sessionDoSearch()">',
+        '<button id="rag-search-btn" onclick="sessionDoSearch()" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#7c3aed;border:none;border-radius:6px;color:#fff;padding:4px 10px;font-size:11px;font-family:var(--font-mono);cursor:pointer;white-space:nowrap">RAG 搜索</button>',
+      '</div>',
       '<select class="form-select" id="session-sort" onchange="filterSessions()" style="width:140px;background:var(--elevated);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;font-family:var(--font-mono);padding:9px 12px;outline:none;cursor:pointer">',
         '<option value="updated">按更新时间</option>',
         '<option value="created">按创建时间</option>',
         '<option value="msgs">按消息数</option>',
       '</select>',
     '</div>',
+    '<div id="rag-status" style="display:none;margin-bottom:12px;padding:8px 12px;background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.25);border-radius:8px;font-size:12px;font-family:var(--font-mono);color:#a78bfa"></div>',
     '<div id="sessions-container"><div class="empty-state"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>正在加载会话...</p></div></div>',
   '</div>'
 ].join('');
@@ -130,6 +160,7 @@ var SESSIONS_CONTENT = [
 var _sessionsPageVisible = false;
 
 function sessionsOnShow(savedState) {
+  console.log('[H5] sessionsOnShow called, savedState=' + (savedState ? 'yes' : 'no'));
   _sessionsPageVisible = true;
   if (savedState && savedState.allSessions) {
     window._allSessions = savedState.allSessions;
@@ -160,27 +191,86 @@ initPage('/sessions');
 initSPA('/sessions');
 
 var _allSessions = [];
+var _ragResults = null;  // RAG 搜索结果，null=未搜索状态
 
 function loadSessions() {
   fetch('/api/sessions').then(function(r) { return r.ok ? r.json() : null; }).then(function(sessions) {
     if (!sessions) return;
     _allSessions = sessions;
     filterSessions();
+    console.log('[H4] loadSessions SUCCESS count=' + sessions.length + ' first=' + (sessions[0] ? sessions[0].thread_id : 'none'));
   }).catch(function() {});
 }
 
+function sessionDoSearch() {
+  var inp = document.getElementById('session-search');
+  var btn = document.getElementById('rag-search-btn');
+  var status = document.getElementById('rag-status');
+  var keyword = inp ? inp.value.trim() : '';
+
+  if (!keyword) {
+    _ragResults = null;
+    if (status) status.style.display = 'none';
+    filterSessions();
+    return;
+  }
+
+  if (btn) { btn.textContent = '搜索中...'; btn.disabled = true; }
+  if (status) { status.textContent = 'RAG 搜索中...'; status.style.display = 'block'; }
+
+  fetch('/api/sessions/search', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({query: keyword, top_k: 8, min_score: 0.0})
+  }).then(function(r) { return r.ok ? r.json() : null;   }).then(function(data) {
+    if (!data) return;
+    // 将 RAG 结果映射为渲染格式
+    var mapped = (data.results || []).map(function(r) {
+      return {
+        thread_id: r.thread_id,
+        title: r.title || ('会话 ' + r.thread_id.slice(0, 8)),
+        message_count: r.message_count || 0,
+        updated_at: r.updated_at,
+        _snippet: r.snippet || '',
+        _score: r.score_percent || 0,
+      };
+    });
+    // 语义检索 0 条时不要清空列表：退出 RAG 模式，仍显示本地会话（避免误以为「啥也没有」）
+    if (!mapped.length) {
+      _ragResults = null;
+      if (status) status.textContent = '语义检索无匹配，已按右侧排序显示全部会话（' + data.elapsed_ms + 'ms）';
+    } else {
+      _ragResults = mapped;
+      if (status) status.textContent = 'RAG 搜索完成，找到 ' + mapped.length + ' 条相关会话（' + data.elapsed_ms + 'ms）';
+    }
+    filterSessions();
+  }).catch(function() {
+    if (status) status.textContent = '搜索失败，请重试';
+    if (btn) { btn.textContent = 'RAG 搜索'; btn.disabled = false; }
+  }).finally(function() {
+    if (btn) { btn.textContent = 'RAG 搜索'; btn.disabled = false; }
+  });
+}
+
 function filterSessions() {
-  var searchEl = document.getElementById('session-search');
   var sortEl = document.getElementById('session-sort');
-  var keyword = searchEl ? searchEl.value.toLowerCase() : '';
   var sortBy = sortEl ? sortEl.value : 'updated';
 
-  var filtered = _allSessions.filter(function(s) {
-    var title = s.title || ('会话 ' + s.thread_id.slice(0, 8));
-    return !keyword || title.toLowerCase().indexOf(keyword) !== -1 || s.thread_id.toLowerCase().indexOf(keyword) !== -1;
-  });
+  var sessions;
+  if (_ragResults !== null) {
+    // RAG 搜索模式：直接用 RAG 结果，无需本地过滤
+    sessions = _ragResults.slice();
+  } else {
+    // 普通模式：关键字过滤
+    var searchEl = document.getElementById('session-search');
+    var keyword = searchEl ? searchEl.value.toLowerCase().trim() : '';
+    sessions = _allSessions.filter(function(s) {
+      var title = s.title || ('会话 ' + s.thread_id.slice(0, 8));
+      return !keyword || title.toLowerCase().indexOf(keyword) !== -1 || s.thread_id.toLowerCase().indexOf(keyword) !== -1;
+    });
+  }
 
-  filtered.sort(function(a, b) {
+  sessions.sort(function(a, b) {
     if (sortBy === 'created') {
       return new Date(b.created_at || 0) - new Date(a.created_at || 0);
     } else if (sortBy === 'msgs') {
@@ -190,12 +280,17 @@ function filterSessions() {
     }
   });
 
-  renderSessions(filtered);
+  renderSessions(sessions);
 }
 
 function renderSessions(sessions) {
   var container = document.getElementById('sessions-container');
-  if (!container) return;
+  console.log('[H6] renderSessions called sessions.length=' + sessions.length + ' container=' + (!!container));
+  if (!container) {
+    console.log('[H6] sessions-container NOT FOUND in DOM, retrying in 100ms');
+    setTimeout(function() { renderSessions(sessions); }, 100);
+    return;
+  }
   if (!sessions.length) {
     container.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>暂无会话记录</p></div>';
     return;
@@ -204,10 +299,15 @@ function renderSessions(sessions) {
     var ts = s.updated_at ? new Date(s.updated_at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}) : '--';
     var title = s.title || ('会话 ' + s.thread_id.slice(0, 8));
     var expanded = window._expandedSession === s.thread_id;
+    var ragMeta = '';
+    if (s._score && s._snippet) {
+      ragMeta = '<div class="session-card-rag" title="' + esc(s._snippet) + '"><span style="color:#a78bfa;font-size:10px">相关度 ' + s._score + '%</span> <span style="color:var(--muted);font-size:10px">' + esc(s._snippet.slice(0, 80)) + '</span></div>';
+    }
     return '<div class="session-item" id="sess-' + esc(s.thread_id) + '">' +
       '<div class="session-card" onclick="toggleSession(\'' + esc(s.thread_id) + '\')" style="cursor:pointer">' +
         '<div class="session-card-info">' +
           '<div class="session-card-title">' + esc(title) + '</div>' +
+          ragMeta +
           '<div class="session-card-meta">ID: ' + s.thread_id.slice(0, 12) + '... | ' + (s.message_count || 0) + ' 条消息 | ' + ts + '</div>' +
         '</div>' +
         '<div class="session-card-actions" onclick="event.stopPropagation()">' +
@@ -383,6 +483,11 @@ function chatDelSession(tid) {
 }
 
 function chatResetSession() {
+  _ragResults = null;
+  var status = document.getElementById('rag-status');
+  if (status) status.style.display = 'none';
+  var inp = document.getElementById('session-search');
+  if (inp) inp.value = '';
   G.threadId = 't_' + Math.random().toString(36).slice(2, 10);
   localStorage.setItem('rag_tid', G.threadId);
   toast('新会话已创建');

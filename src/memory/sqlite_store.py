@@ -206,6 +206,7 @@ def upsert_session(thread_id: str, title: str = "") -> None:
         )
         conn.commit()
         conn.close()
+        logger.info("[H1] upsert_session SUCCESS thread_id=%s title=%s", thread_id, title[:30] if title else "")
     except Exception as e:
         logger.warning(f"[sessions] upsert failed: {e}")
 
@@ -228,6 +229,7 @@ def update_session_message_count(thread_id: str) -> None:
         )
         conn.commit()
         conn.close()
+        logger.info("[H2] update_session_message_count SUCCESS thread_id=%s count=%s", thread_id, count)
     except Exception as e:
         logger.warning(f"[sessions] update count failed: {e}")
 
@@ -239,46 +241,19 @@ def get_session_detail(thread_id: str, db_path: str | None = None) -> dict:
       - tool_events：工具调用记录
     返回结构：{ messages: [...], tool_events: {...} }
     """
-    import uuid as _uuid
-    _run_id = str(_uuid.uuid4())[:8]
-    _log = lambda msg, data: _write_log({
-        "id": f"log_{int(__import__('time').time()*1000)}_{_run_id}",
-        "sessionId": "4eeec4",
-        "location": "sqlite_store.py:get_session_detail",
-        "message": msg,
-        "data": data,
-        "timestamp": int(__import__('time').time()*1000),
-        "runId": "debug",
-        "hypothesisId": "H2",
-    })
-    _write_log = lambda p: (
-        __import__('pathlib').Path(__import__('sys').prefix).parent / "debug-4eeec4.log"
-    ).write_text("", encoding="utf-8") or True  # noop placeholder
-    import time as _time
-    import json as _json
-    _LOG_PATH = __import__('pathlib').Path(__file__).resolve().parent.parent.parent / "debug-4eeec4.log"
-    def _dbg(msg, data):
-        try:
-            with open(_LOG_PATH, "a", encoding="utf-8") as _f:
-                _f.write(_json.dumps({
-                    "id": f"log_{int(_time.time()*1000)}_{_run_id}",
-                    "sessionId": "4eeec4",
-                    "location": "sqlite_store.py:get_session_detail",
-                    "message": msg,
-                    "data": data,
-                    "timestamp": int(_time.time()*1000),
-                    "runId": "debug",
-                    "hypothesisId": "H2",
-                }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-
-    _dbg("ENTER", {"thread_id": thread_id})
     db_path = db_path or str(CHECKPOINT_PATH)
     import sqlite3
     conn = sqlite3.connect(db_path, check_same_thread=False)
 
     # 0) 确保 sessions 表存在（新建数据库首次访问时）
+    try:
+        conn.execute("SELECT 1 FROM sessions WHERE thread_id = ?", (thread_id,))
+    except Exception:
+        try:
+            conn.executescript(_SESSIONS_DDL)
+            conn.commit()
+        except Exception:
+            pass
 
     # 1) 从 checkpointer 取消息
     messages = []
@@ -298,14 +273,12 @@ def get_session_detail(thread_id: str, db_path: str | None = None) -> dict:
             import pickle
             saved = pickle.loads(row[0])
             raw_msgs = saved.get("channel_values", {}).get("messages", []) if isinstance(saved, dict) else []
-            _dbg("CHECKPOINT_DATA", {"saved_keys": list(saved.keys()) if isinstance(saved, dict) else type(saved).__name__, "raw_msgs_len": len(raw_msgs)})
             for m in raw_msgs:
                 if hasattr(m, "type"):
                     msg_type = m.type
                 else:
                     msg_type = type(m).__name__
                 content = m.content if hasattr(m, "content") else str(m)
-                _dbg("MSG_EXTRACT", {"type": msg_type, "content_len": len(content), "content_preview": content[:80]})
                 tool_calls = None
                 if hasattr(m, "tool_calls") and m.tool_calls:
                     tool_calls = [
@@ -314,7 +287,6 @@ def get_session_detail(thread_id: str, db_path: str | None = None) -> dict:
                     ]
                 messages.append({"type": msg_type, "content": content, "tool_calls": tool_calls})
     except Exception as e:
-        _dbg("CHECKPOINT_ERROR", {"error": str(e)})
         logger.warning(f"[session_detail] messages: {e}")
 
     # 2) 取工具事件
@@ -329,20 +301,8 @@ def get_session_detail(thread_id: str, db_path: str | None = None) -> dict:
             """,
             (thread_id,),
         )
-        _dbg("TOOL_EVENTS_QUERY", {"row_count": cursor.fetchone().__len__() if False else -1})
-        # re-execute since fetchone above consumed
-        cursor = conn.execute(
-            """
-            SELECT turn_index, step_index, seq, event_type, tool_name, tool_input, tool_result, ts
-              FROM tool_events
-             WHERE thread_id = ?
-             ORDER BY turn_index, step_index, seq
-            """,
-            (thread_id,),
-        )
         for row in cursor:
             turn_i, step_i, seq_i, ev_type, tname, tinput, tresult, ts = row
-            _dbg("TOOL_ROW", {"turn_i": turn_i, "step_i": step_i, "seq_i": seq_i, "ev_type": ev_type, "tname": tname})
             key = (turn_i, step_i)
             if key not in tool_events:
                 tool_events[key] = {"turn": turn_i, "step": step_i, "tools": [], "ts": ts}
@@ -352,13 +312,10 @@ def get_session_detail(thread_id: str, db_path: str | None = None) -> dict:
                 "input": tinput,
                 "result": tresult,
             })
-        _dbg("TOOL_EVENTS_DONE", {"distinct_keys": len(tool_events), "total_tools": sum(len(v["tools"]) for v in tool_events.values())})
     except Exception as e:
-        _dbg("TOOL_EVENTS_ERROR", {"error": str(e)})
         logger.warning(f"[session_detail] tool_events: {e}")
 
     conn.close()
-    _dbg("EXIT", {"messages_count": len(messages), "tool_events_count": len(tool_events), "H1_check": "turn_i values above tell us if H1 is true"})
     return {"messages": messages, "tool_events": list(tool_events.values())}
 
 
@@ -385,6 +342,7 @@ def list_threads(checkpointer: Any = None) -> list[dict]:
             )
             rows = cursor.fetchall()
             conn.close()
+            logger.info("[H3] list_threads SUCCESS rows=%d sessions=%s", len(rows), [r[0] for r in rows])
             if rows:
                 return [
                     {

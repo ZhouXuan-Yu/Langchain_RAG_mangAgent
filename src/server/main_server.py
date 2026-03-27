@@ -44,6 +44,25 @@ def _cleanup_resources():
     """Stop all background threads/processes so uvicorn can exit gracefully."""
     logger.info("[cleanup] stopping background resources...")
 
+    # Log shutdown tracker
+    try:
+        from src.server.api import _SHUTDOWN_TRACKER
+        logger.info(f"[cleanup] shutdown tracker: pending={_SHUTDOWN_TRACKER['pending_tasks']}, max={_SHUTDOWN_TRACKER['max_pending']}")
+    except Exception:
+        pass
+
+    # Check for running orchestrator jobs
+    try:
+        from src.server.orch_jobs import get_job_manager, JobStatus
+        jm = get_job_manager()
+        running = [j.job_id for j in jm.list_jobs() if j.status == JobStatus.RUNNING]
+        if running:
+            logger.warning(f"[cleanup] {len(running)} running orchestrator jobs: {running}")
+        else:
+            logger.info("[cleanup] no running orchestrator jobs")
+    except Exception as e:
+        logger.warning(f"[cleanup] job manager check failed: {e}")
+
     # 1. TaskScheduler ThreadPoolExecutor
     try:
         from src.server.task_scheduler import get_scheduler
@@ -79,6 +98,26 @@ def _cleanup_resources():
     logger.info("[cleanup] done")
 
 
+async def _cleanup_resources_async():
+    """
+    Cancel all pending asyncio tasks during shutdown.
+    Does NOT call loop.stop() or loop.close() — those are uvicorn's responsibility
+    and calling them from here raises CancelledError that breaks the shutdown chain.
+    """
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    current_task = asyncio.current_task(loop)
+    pending = [t for t in asyncio.all_tasks(loop) if t is not current_task]
+    if pending:
+        for t in pending:
+            t.cancel()
+        await asyncio.wait(pending, timeout=3.0)
+
+
 atexit.register(_cleanup_resources)
 
 
@@ -88,6 +127,7 @@ async def lifespan(app: FastAPI):
     logger.info("[lifespan] server starting...")
     yield
     logger.info("[lifespan] server shutting down...")
+    await _cleanup_resources_async()
     _cleanup_resources()
 
 
