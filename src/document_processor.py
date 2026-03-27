@@ -1,5 +1,7 @@
 """文档处理器 — 支持 PDF/DOCX/TXT/Markdown/CSV/图片/代码 的文本提取与分块."""
 
+from __future__ import annotations
+
 import io
 import logging
 import os
@@ -288,7 +290,7 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE) -> list[str]:
 class DocumentStore:
     """文档元数据 + chunk 存储."""
 
-    def list(self, doc_type: Optional[str] = None) -> list[dict]:
+    def list_docs(self, doc_type: Optional[str] = None) -> list[dict]:
         with _conn() as c:
             if doc_type:
                 rows = c.execute(
