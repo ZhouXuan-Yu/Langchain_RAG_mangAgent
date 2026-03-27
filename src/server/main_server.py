@@ -54,19 +54,19 @@ app.add_middleware(
 # 挂载 API 路由
 app.include_router(router)
 
-# 挂载静态文件（index.html 在项目根目录）
-static_root = PROJECT_ROOT
-if (static_root / "index.html").exists():
-    app.mount("/static", StaticFiles(directory=str(static_root)), name="static")
+# 挂载静态文件（pages 目录，每个功能对应一个独立 HTML 页面）
+static_root = PROJECT_ROOT / "pages"
+if static_root.exists():
+    app.mount("/", StaticFiles(directory=str(static_root), html=True), name="pages")
 
 # ── 根路径：返回 index.html ───────────────────────────────────────────────────
 @app.get("/")
 async def root():
-    """返回前端单页应用."""
-    index_path = PROJECT_ROOT / "index.html"
+    """返回前端主页面（对话主页）."""
+    index_path = PROJECT_ROOT / "pages" / "index.html"
     if index_path.exists():
         return Response(index_path.read_text(encoding="utf-8"), media_type="text/html")
-    return {"message": "index.html not found — please create it in the project root"}
+    return {"message": "pages/index.html not found"}
 
 # ── 健康检查 ───────────────────────────────────────────────────────────────────
 @app.get("/health")

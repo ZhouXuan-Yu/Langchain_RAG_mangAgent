@@ -28,8 +28,10 @@ def _open_browser(url: str) -> None:
 
 
 def _is_port_open(host: str, port: int) -> bool:
+    """检测端口是否开放."""
     sock = socket.socket()
     try:
+        sock.settimeout(1)
         sock.connect((host, port))
         sock.close()
         return True
@@ -49,31 +51,25 @@ def main():
     (data_dir / "chroma_db").mkdir(parents=True, exist_ok=True)
     (data_dir / "checkpointer").mkdir(parents=True, exist_ok=True)
 
-    # 3. 检查端口是否已被占用
-    if _is_port_open("localhost", 8501):
-        print("[WARN] 端口 8501 已被占用，先尝试关闭旧进程...")
-        # 杀掉占用端口的 Python 进程
-        subprocess.run(
-            ["powershell", "-Command",
-             "Get-NetTCPConnection -LocalPort 8501 | "
-             "Where-Object { $_.OwningProcess -ne $PID } | "
-             "Stop-Process -Force -ErrorAction SilentlyContinue"],
-            capture_output=True,
-        )
-        time.sleep(2)
-        if _is_port_open("localhost", 8501):
-            print("[WARN] 端口仍被占用，尝试直接打开浏览器...")
-            _open_browser("http://localhost:8501")
-            return
+    # 3. 检查端口是否已被占用，尝试复用已有服务
+    port = 8501
+    if _is_port_open("localhost", port):
+        print(f"[INFO] 端口 {port} 已有服务运行，尝试复用...")
+        url = f"http://localhost:{port}"
+        print(f"[INFO] 正在打开浏览器: {url}")
+        _open_browser(url)
+        print("[INFO] 服务运行中，按 Ctrl+C 停止\n")
+        return
 
+    # 端口未被占用，直接启动服务
     # 4. 启动后端（后台进程）
-    print("[INFO] 正在启动后端服务 (FastAPI + LangGraph) ...")
+    print(f"[INFO] 正在启动后端服务 (FastAPI + LangGraph) 端口 {port} ...")
     server = subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn",
             "src.server.main_server:app",
             "--host", "localhost",
-            "--port", "8501",
+            "--port", str(port),
             "--reload",
         ],
         cwd=PROJECT_ROOT,
@@ -82,7 +78,7 @@ def main():
     )
 
     # 5. 等待服务就绪
-    print("[INFO] 等待服务启动...")
+    print(f"[INFO] 等待服务启动 (端口 {port})...")
     for i in range(20):
         time.sleep(1)
         if server.poll() is not None:
@@ -90,7 +86,7 @@ def main():
             print(f"[ERROR] 后端进程异常退出 (exit {server.returncode})")
             print(output[-1000:])
             return
-        if _is_port_open("localhost", 8501):
+        if _is_port_open("localhost", port):
             break
         print(f"[INFO]  等待中... ({i+1}/20)")
     else:
@@ -100,7 +96,7 @@ def main():
         return
 
     # 6. 打开浏览器
-    url = "http://localhost:8501"
+    url = f"http://localhost:{port}"
     print(f"[INFO] 服务已就绪，正在打开浏览器: {url}")
     _open_browser(url)
 

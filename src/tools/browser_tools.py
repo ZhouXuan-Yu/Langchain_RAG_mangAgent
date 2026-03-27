@@ -45,10 +45,42 @@ def _get_browser() -> Any:
         # 首次启动或重启
         from playwright.sync_api import sync_playwright
         p = sync_playwright().start()
-        browser = p.chromium.launch(headless=True)
-        _browser_pool[key] = {"browser": browser, "playwright": p}
-        logger.info("[browser_pool] browser started (pid=%s)", browser._impl_obj._browser_type.name)
-        return browser, p
+
+        # 默认 Chrome 路径
+        chrome_path = None
+        import platform
+        if platform.system() == "Windows":
+            chrome_paths = [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            ]
+            for path in chrome_paths:
+                if os.path.exists(path):
+                    chrome_path = path
+                    break
+
+        try:
+            if chrome_path:
+                browser = p.chromium.launch(
+                    executablePath=chrome_path,
+                    headless=True
+                )
+            else:
+                browser = p.chromium.launch(headless=True)
+            _browser_pool[key] = {"browser": browser, "playwright": p}
+            logger.info("[browser_pool] browser started (pid=%s)", browser._impl_obj._browser_type.name)
+            return browser, p
+        except Exception as e:
+            logger.error(f"[browser_pool] 启动浏览器失败: {e}")
+            print("\n" + "=" * 60)
+            print("⚠️  浏览器启动失败！")
+            print(f"错误信息: {e}")
+            print("-" * 60)
+            print("解决方法:")
+            print("  1. 运行 'playwright install chromium' 安装 Chromium")
+            print("  2. 或者确保本机 Chrome 已安装并可访问")
+            print("=" * 60 + "\n")
+            raise
 
 
 # ── Tavily Client Singleton ───────────────────────────────────────────────────
