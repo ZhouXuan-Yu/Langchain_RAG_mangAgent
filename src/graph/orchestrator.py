@@ -258,19 +258,6 @@ class CrayfishOrchestrator:
 
         try:
             llm = init_deepseek_llm(temperature=0.3, streaming=False)
-            # #region agent log
-            try:
-                import json as _dbg_json
-                import time as _dbg_time
-                with open("D:/Aprogress/Langchain/debug-5df370.log", "a", encoding="utf-8") as _df:
-                    _df.write(_dbg_json.dumps({
-                        "sessionId": "5df370", "hypothesisId": "H3", "location": "orchestrator._create_plan",
-                        "message": "before_llm_ainvoke", "data": {"req_len": len(requirement)},
-                        "timestamp": int(_dbg_time.time() * 1000),
-                    }, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-            # #endregion
             response = await llm.ainvoke([
                 SystemMessage(content="你是一个专业的任务规划专家，擅长将复杂需求拆解为可执行的子任务。"),
                 HumanMessage(content=prompt),
@@ -296,19 +283,6 @@ class CrayfishOrchestrator:
                         agent = "coder"
                     result.append(TaskItem(task_id, t.get("description", ""), agent))
                 logger.info(f"[orchestrator] plan created: {len(result)} tasks")
-                # #region agent log
-                try:
-                    import json as _dbg_json2
-                    import time as _dbg_time2
-                    with open("D:/Aprogress/Langchain/debug-5df370.log", "a", encoding="utf-8") as _df2:
-                        _df2.write(_dbg_json2.dumps({
-                            "sessionId": "5df370", "hypothesisId": "H3", "location": "orchestrator._create_plan",
-                            "message": "after_plan_parse_ok", "data": {"n_tasks": len(result)},
-                            "timestamp": int(_dbg_time2.time() * 1000),
-                        }, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
-                # #endregion
                 return result
 
         except Exception as e:

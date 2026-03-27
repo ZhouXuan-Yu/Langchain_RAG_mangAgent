@@ -137,36 +137,18 @@ async def _run_orchestrator_job(job: BackgroundJob) -> None:
     在后台 asyncio.Task 中运行编排器。
     运行完成后将最终结果写入 job.result，并在每个事件上更新 worker_state。
     """
-    # #region agent log
-    try:
-        import json as _dbg_json
-        import time as _dbg_time
-        with open("D:/Aprogress/Langchain/debug-5df370.log", "a", encoding="utf-8") as _df:
-            _df.write(_dbg_json.dumps({
-                "sessionId": "5df370", "hypothesisId": "H1", "location": "orch_jobs._run_orchestrator_job",
-                "message": "job_runner_enter", "data": {"job_id": job.job_id, "status_before": job.status.value},
-                "timestamp": int(_dbg_time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
     from src.graph.orchestrator import CrayfishOrchestrator
 
     try:
         job.status = JobStatus.RUNNING
 
         async def progress_callback(event: dict) -> None:
-            # 检查取消标志
             if job.cancel_event.is_set():
                 raise asyncio.CancelledError("Job cancelled by user")
-
             ev_type = event.get("type", "message")
             job.add_event(ev_type, event)
-
-            # 更新 worker_state 快照
             _update_worker_state(job, ev_type, event)
 
-        # 每个 job 用独立 orchestrator 实例（避免并发状态污染）
         orchestrator = CrayfishOrchestrator()
 
         await orchestrator.orchestrate(
@@ -176,43 +158,14 @@ async def _run_orchestrator_job(job: BackgroundJob) -> None:
             progress_callback=progress_callback,
         )
 
-        # 如果未被取消，标记完成
         if not job.cancel_event.is_set():
             job.status = JobStatus.DONE
-        # #region agent log
-        try:
-            import json as _dbg_json3
-            import time as _dbg_time3
-            with open("D:/Aprogress/Langchain/debug-5df370.log", "a", encoding="utf-8") as _df3:
-                _df3.write(_dbg_json3.dumps({
-                    "sessionId": "5df370", "hypothesisId": "H1", "location": "orch_jobs._run_orchestrator_job",
-                    "message": "orchestrate_finished", "data": {
-                        "job_id": job.job_id, "final_status": job.status.value, "n_events": len(job.events),
-                    },
-                    "timestamp": int(_dbg_time3.time() * 1000),
-                }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
 
     except asyncio.CancelledError:
         job.set_cancelled()
         logger.info(f"[orch_jobs] job {job.job_id} cancelled")
 
     except Exception as e:
-        # #region agent log
-        try:
-            import json as _dbg_json4
-            import time as _dbg_time4
-            with open("D:/Aprogress/Langchain/debug-5df370.log", "a", encoding="utf-8") as _df4:
-                _df4.write(_dbg_json4.dumps({
-                    "sessionId": "5df370", "hypothesisId": "H1", "location": "orch_jobs._run_orchestrator_job",
-                    "message": "job_runner_exception", "data": {"job_id": job.job_id, "err": str(e)[:500]},
-                    "timestamp": int(_dbg_time4.time() * 1000),
-                }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
         job.set_failed(str(e))
         job.add_event("error", {
             "type": "error",

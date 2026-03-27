@@ -86,10 +86,18 @@ function tasksOnShow(savedState) {
   }
   loadTasks();
   loadAgentsForFilter();
+  // 启动轮询（如果还没有）
+  if (!window._tasksPollTimer) {
+    window._tasksPollTimer = setInterval(loadTasks, 5000);
+  }
 }
 
 // ── 任务页 save ──────────────────────────────────────────────
 function tasksOnSave() {
+  if (window._tasksPollTimer) {
+    clearInterval(window._tasksPollTimer);
+    window._tasksPollTimer = null;
+  }
   return { allTasks: window._allTasks };
 }
 

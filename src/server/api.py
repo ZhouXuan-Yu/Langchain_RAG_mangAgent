@@ -689,6 +689,21 @@ async def upload_document(
         try:
             text = extract_text(content, doc_type)
             logger.info(f"[upload] extracted text length: {len(text) if text else 0} chars")
+            # region agent log
+            from src.utils.debug_ndjson import debug_ndjson
+
+            debug_ndjson(
+                "H4",
+                "api.upload_document:after_extract",
+                "extract_outcome",
+                {
+                    "doc_type": doc_type,
+                    "size": size,
+                    "text_len": len(text or ""),
+                    "text_stripped_empty": not (text or "").strip(),
+                },
+            )
+            # endregion
             if not (text or "").strip():
                 err = "未能从文件中提取到文本（空文件、加密文档或缺少解析依赖）。"
                 if size == 0:
@@ -696,6 +711,8 @@ async def upload_document(
                         "上传内容为空（0 字节），服务器未收到文件数据。"
                         "请重新选择本地文件后再试；若文件在网盘同步目录，请确认已同步完成。"
                     )
+                elif doc_type == "pdf":
+                    err = "未能从 PDF 中提取到文本。" + pdf_upload_failure_hint(content)
                 elif doc_type == "docx":
                     if is_legacy_word_doc(content):
                         err = (
@@ -822,21 +839,6 @@ async def get_orch_job(job_id: str) -> dict:
     resp = job.to_dict()
     # 运行中也需要返回 events，否则前端轮询 /jobs/{id} 时执行日志始终为空
     resp["events"] = [dict(e) for e in job.events]
-    # #region agent log
-    try:
-        import json as _dbg_json
-        import time as _dbg_time
-        with open("D:/Aprogress/Langchain/debug-5df370.log", "a", encoding="utf-8") as _df:
-            _df.write(_dbg_json.dumps({
-                "sessionId": "5df370", "hypothesisId": "H2", "location": "api.get_orch_job",
-                "message": "get_job_response", "data": {
-                    "job_id": job_id, "status": job.status.value, "n_events": len(job.events),
-                },
-                "timestamp": int(_dbg_time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
     return resp
 
 

@@ -206,6 +206,16 @@ def extract_text(content: bytes, doc_type: str) -> str:
             return content.decode("utf-8", errors="replace")
     except Exception as e:
         logger.warning(f"[doc_processor] extract failed for type {doc_type}: {e}")
+        # region agent log
+        from src.utils.debug_ndjson import debug_ndjson
+
+        debug_ndjson(
+            "H3",
+            "document_processor.extract_text:except",
+            "extract_raised",
+            {"doc_type": doc_type, "exc_type": type(e).__name__, "exc_msg": str(e)[:300]},
+        )
+        # endregion
         return ""
 
 
@@ -247,6 +257,21 @@ def _extract_pdf(content: bytes) -> str:
     依次尝试 PyMuPDF → pypdf → pdfplumber，取最长结果。
     PyMuPDF 对中文、学术排版、嵌入字体 PDF 兼容性通常最好。
     """
+    # region agent log
+    from src.utils.debug_ndjson import debug_ndjson
+
+    debug_ndjson(
+        "H5",
+        "document_processor._extract_pdf:entry",
+        "pdf_magic",
+        {
+            "len": len(content),
+            "head_hex": (content[:16].hex() if content else ""),
+            "starts_with_pdf": content[:5] == b"%PDF-" if len(content) >= 5 else False,
+        },
+    )
+    # endregion
+
     methods: list[tuple[str, str]] = []
 
     # 1. PyMuPDF（优先）
@@ -271,10 +296,26 @@ def _extract_pdf(content: bytes) -> str:
                 logger.debug("[pdf] pymupdf: 0 chars (may be image-only or odd encoding)")
         finally:
             doc.close()
-    except ImportError:
+    except ImportError as _e:
         logger.warning("[pdf] pymupdf (fitz) not installed — run: pip install pymupdf")
+        # region agent log
+        debug_ndjson(
+            "H1",
+            "document_processor._extract_pdf:pymupdf",
+            "import_failed",
+            {"exc": type(_e).__name__},
+        )
+        # endregion
     except Exception as e:
         logger.warning("[pdf] pymupdf error: %s", e, exc_info=True)
+        # region agent log
+        debug_ndjson(
+            "H1",
+            "document_processor._extract_pdf:pymupdf",
+            "open_or_read_failed",
+            {"exc_type": type(e).__name__, "exc_msg": str(e)[:200]},
+        )
+        # endregion
 
     # 2. pypdf
     try:
@@ -329,10 +370,26 @@ def _extract_pdf(content: bytes) -> str:
 
     if not methods:
         logger.warning("[pdf] all extractors returned empty — likely image-only/scanned PDF or unsupported encoding")
+        # region agent log
+        debug_ndjson(
+            "H2",
+            "document_processor._extract_pdf:exit",
+            "no_text_all_extractors",
+            {"methods_tried": ["pymupdf", "pypdf", "pdfplumber"]},
+        )
+        # endregion
         return ""
 
     best_lib, best_text = max(methods, key=lambda x: len(x[1]))
     logger.info("[pdf] using %s result (%s chars)", best_lib, len(best_text))
+    # region agent log
+    debug_ndjson(
+        "H2",
+        "document_processor._extract_pdf:exit",
+        "ok",
+        {"winner": best_lib, "chars": len(best_text), "all": [(n, len(t)) for n, t in methods]},
+    )
+    # endregion
     return best_text
 
 

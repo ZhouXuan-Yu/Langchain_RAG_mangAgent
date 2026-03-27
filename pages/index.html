@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>对话 - Langchain_RAG</title>
   <script src="/lib/shared.js"></script>
+  <script src="/lib/kb_spa.js"></script>
   <style>
     /* 对话页专用样式 */
     .chat-layout {
@@ -560,7 +561,7 @@ function chatOnShow(savedState) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({model: m})
       }).then(function(r) {
-        if (r.ok) { G.model = m; toast('模型已切换'); renderHeader('/'); }
+        if (r.ok) { G.model = m; toast('模型已切换'); renderHeader(_SPA.currentPath || '/'); }
         else toast('切换失败', 'error');
       }).catch(function() { toast('切换失败', 'error'); });
     });
@@ -598,23 +599,23 @@ function chatOnSave() {
   };
 }
 
-// ── 注册对话页 ────────────────────────────────────────────────
+// ── 注册对话页 + 知识库（主壳内必须有 /kb，否则 navigateTo 后 main-content 为空）──
 registerSPA('/', CHAT_CONTENT, chatOnShow, chatOnSave);
+registerSPA('/kb', KB_CONTENT, kbOnShow, kbOnSave);
 
-// ── 页面初始化 ────────────────────────────────────────────────
+function bootSPAPath() {
+  var p = location.pathname || '/';
+  if (p.length > 1 && p.slice(-1) === '/') p = p.slice(0, -1);
+  if (!p) p = '/';
+  if (!_SPA.registry[p]) p = '/';
+  return p;
+}
+
+var bootPath = bootSPAPath();
+
 injectStyles();
-initPage('/');
-
-// 首次加载时自动显示对话页
-var main = document.getElementById('main-content');
-main.innerHTML = CHAT_CONTENT;
-_SPA.currentPath = '/';
-
-initSPA('/');
-loadConfig(function(c) {
-  renderHeader('/');
-});
-chatOnShow(null);
+initPage(bootPath);
+initSPA(bootPath);
 
 /* ── 发送消息 ──────────────────────────────────────────── */
 var _currentTaskId_Active = null;
