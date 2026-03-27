@@ -1,0 +1,339 @@
+"""多 Agent 编排器 — Agent 注册表、任务分发、Agent 间通信."""
+
+import json
+import logging
+import sqlite3
+import threading
+import uuid
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+from src.config import CHECKPOINT_PATH, DEFAULT_MODEL
+
+logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR.mkdir(exist_ok=True)
+AGENTS_DB = DATA_DIR / "agents.db"
+
+# 默认 Agent 颜色池（供 UI 使用）
+AGENT_COLORS = [
+    "#8b0000",  # 深红
+    "#555555",  # 炭灰
+    "#999999",  # 银灰
+    "#c0392b",  # 暗红
+    "#4a4a4a",  # 深灰
+    "#7f8c8d",  # 雾灰
+    "#2c3e50",  # 藏青
+    "#bdc3c7",  # 浅银
+]
+
+
+def _uuid() -> str:
+    return "agent_" + uuid.uuid4().hex[:12]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SQLite 连接
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_agents_lock = threading.Lock()
+
+
+@contextmanager
+def _conn():
+    conn = sqlite3.connect(str(AGENTS_DB), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _init_db():
+    with _conn() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS agent_profiles (
+                id               TEXT PRIMARY KEY,
+                name             TEXT NOT NULL,
+                role             TEXT NOT NULL,
+                description      TEXT DEFAULT '',
+                model            TEXT DEFAULT 'deepseek-chat',
+                color            TEXT DEFAULT '#888888',
+                is_active        INTEGER DEFAULT 1,
+                tasks_completed  INTEGER DEFAULT 0,
+                parent_id        TEXT,
+                created_at       TEXT
+            )
+        """)
+        # 如果没有默认 Agent，创建一个主控 Agent
+        row = c.execute("SELECT COUNT(*) as cnt FROM agent_profiles").fetchone()
+        if row["cnt"] == 0:
+            now = datetime.now().isoformat()
+            c.execute(
+                "INSERT INTO agent_profiles (id,name,role,description,model,color,is_active,parent_id,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                ("agent_main", "Chief Coordinator", "chief",
+                 "主控 Agent，负责协调所有子 Agent 的工作",
+                 DEFAULT_MODEL, "#8b0000", 1, None, now),
+            )
+
+
+_init_db()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AgentRegistry 核心类
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class AgentRegistry:
+    """多 Agent 注册表 — 管理所有 Agent 实例及其元数据."""
+
+    def __init__(self):
+        self._instances: dict[str, Any] = {}  # agent_id -> compiled agent graph
+        self._color_idx = 0
+
+    # ── Agent CRUD ──────────────────────────────────────────────────────────
+
+    def list(self, is_active: Optional[bool] = None) -> list[dict]:
+        """列出所有 Agent."""
+        with _conn() as c:
+            if is_active is not None:
+                rows = c.execute(
+                    "SELECT * FROM agent_profiles WHERE is_active=? ORDER BY created_at",
+                    (1 if is_active else 0,),
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM agent_profiles ORDER BY created_at"
+                ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def get(self, agent_id: str) -> Optional[dict]:
+        """获取单个 Agent 信息."""
+        with _conn() as c:
+            row = c.execute("SELECT * FROM agent_profiles WHERE id=?", (agent_id,)).fetchone()
+        if not row:
+            return None
+        return self._row_to_dict(row)
+
+    def create(
+        self,
+        name: str,
+        role: str,
+        description: str = "",
+        model: str = DEFAULT_MODEL,
+        color: Optional[str] = None,
+        parent_id: Optional[str] = None,
+    ) -> dict:
+        """注册一个新 Agent."""
+        agent_id = _uuid()
+        now = datetime.now().isoformat()
+
+        if color is None:
+            color = AGENT_COLORS[self._color_idx % len(AGENT_COLORS)]
+            self._color_idx += 1
+
+        with _conn() as c:
+            c.execute(
+                "INSERT INTO agent_profiles (id,name,role,description,model,color,parent_id,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (agent_id, name, role, description, model, color, parent_id, now),
+            )
+
+        logger.info(f"[agent_registry] created agent {agent_id}: {name} ({role})")
+        return self.get(agent_id)
+
+    def update(
+        self,
+        agent_id: str,
+        name: Optional[str] = None,
+        role: Optional[str] = None,
+        description: Optional[str] = None,
+        model: Optional[str] = None,
+        color: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> Optional[dict]:
+        """更新 Agent 配置."""
+        updates: list[str] = []
+        params: list = []
+        if name is not None:
+            updates.append("name=?"); params.append(name)
+        if role is not None:
+            updates.append("role=?"); params.append(role)
+        if description is not None:
+            updates.append("description=?"); params.append(description)
+        if model is not None:
+            updates.append("model=?"); params.append(model)
+        if color is not None:
+            updates.append("color=?"); params.append(color)
+        if is_active is not None:
+            updates.append("is_active=?"); params.append(1 if is_active else 0)
+
+        if not updates:
+            return self.get(agent_id)
+
+        params.append(agent_id)
+        with _conn() as c:
+            c.execute(f"UPDATE agent_profiles SET {','.join(updates)} WHERE id=?", params)
+
+        # 清除实例缓存（下次请求时重建）
+        self._instances.pop(agent_id, None)
+        logger.info(f"[agent_registry] updated agent {agent_id}")
+        return self.get(agent_id)
+
+    def delete(self, agent_id: str) -> bool:
+        """删除 Agent（软删除：标记为非活跃）."""
+        # 不允许删除主控 Agent
+        if agent_id == "agent_main":
+            return False
+        with _conn() as c:
+            c.execute(
+                "UPDATE agent_profiles SET is_active=0 WHERE id=?",
+                (agent_id,),
+            )
+            deleted = c.rowcount > 0
+        if deleted:
+            self._instances.pop(agent_id, None)
+            logger.info(f"[agent_registry] deactivated agent {agent_id}")
+        return deleted
+
+    def increment_completed(self, agent_id: str) -> None:
+        """完成任务计数 +1."""
+        with _conn() as c:
+            c.execute(
+                "UPDATE agent_profiles SET tasks_completed=tasks_completed+1 WHERE id=?",
+                (agent_id,),
+            )
+
+    # ── Agent 实例（按需构建）───────────────────────────────────────────────
+
+    def get_or_create_instance(self, agent_id: str) -> Optional[Any]:
+        """
+        获取编译好的 Agent Graph 实例（按 agent_id 缓存）。
+
+        每个 Agent 有独立的 thread_id 和 session。
+        """
+        if agent_id in self._instances:
+            return self._instances[agent_id]
+
+        profile = self.get(agent_id)
+        if not profile or not profile["is_active"]:
+            return None
+
+        try:
+            from src.llm import init_deepseek_llm
+            from src.graph import build_agent_graph
+            from src.memory.sqlite_store import get_async_sqlite_checkpointer
+
+            import asyncio
+
+            async def _build():
+                llm = init_deepseek_llm(model=profile["model"], streaming=True)
+                checkpointer = await get_async_sqlite_checkpointer(str(CHECKPOINT_PATH))
+                return build_agent_graph(llm, checkpointer=checkpointer)
+
+            # 同步获取 event loop（在 FastAPI 的 async 上下文中应该有 loop）
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            agent = loop.run_until_complete(_build())
+            self._instances[agent_id] = agent
+            logger.info(f"[agent_registry] built and cached agent instance: {agent_id}")
+            return agent
+        except Exception as e:
+            logger.error(f"[agent_registry] failed to build agent {agent_id}: {e}")
+            return None
+
+    # ── 任务分发 ─────────────────────────────────────────────────────────────
+
+    async def dispatch_task(
+        self,
+        agent_id: str,
+        task_description: str,
+        thread_id: Optional[str] = None,
+    ) -> dict:
+        """
+        分发任务给指定 Agent，执行并返回结果。
+        """
+        agent = self.get_or_create_instance(agent_id)
+        if not agent:
+            return {"status": "error", "message": f"Agent {agent_id} not found or inactive"}
+
+        from langchain_core.messages import HumanMessage
+        from src.server.dependencies import get_checkpointer
+
+        thread = thread_id or f"agent_{agent_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        config = {"configurable": {"thread_id": thread}}
+
+        accumulated = ""
+
+        try:
+            async for event in agent.astream_events(
+                {"messages": [HumanMessage(content=task_description)], "thread_id": thread},
+                config=config,
+                version="v2",
+            ):
+                ev_type = event.get("event", "")
+                if ev_type == "chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content"):
+                        accumulated += chunk.content
+
+            self.increment_completed(agent_id)
+            return {"status": "ok", "result": accumulated, "agent_id": agent_id}
+
+        except Exception as e:
+            logger.error(f"[agent_registry] dispatch failed for {agent_id}: {e}")
+            return {"status": "error", "message": str(e), "agent_id": agent_id}
+
+    # ── Agent 组织架构 ───────────────────────────────────────────────────────
+
+    def get_org_tree(self) -> list[dict]:
+        """获取 Agent 组织树（扁平结构，带 parent_id 用于前端渲染）."""
+        agents = self.list()
+        return agents
+
+    def get_children(self, parent_id: str) -> list[dict]:
+        """获取指定 Agent 的子节点."""
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT * FROM agent_profiles WHERE parent_id=? ORDER BY created_at",
+                (parent_id,),
+            ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    # ── 辅助 ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _row_to_dict(row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "role": row["role"],
+            "description": row["description"],
+            "model": row["model"],
+            "color": row["color"],
+            "is_active": bool(row["is_active"]),
+            "tasks_completed": row["tasks_completed"],
+            "parent_id": row["parent_id"],
+            "created_at": row["created_at"],
+        }
+
+
+# ── 全局单例 ──────────────────────────────────────────────────────────────
+_registry: Optional[AgentRegistry] = None
+
+
+def get_agent_registry() -> AgentRegistry:
+    global _registry
+    if _registry is None:
+        _registry = AgentRegistry()
+    return _registry
