@@ -253,7 +253,7 @@ class CrayfishOrchestrator:
 
         try:
             llm = init_deepseek_llm(temperature=0.3, streaming=False)
-            response = llm.invoke([
+            response = await llm.invoke([
                 SystemMessage(content="你是一个专业的任务规划专家，擅长将复杂需求拆解为可执行的子任务。"),
                 HumanMessage(content=prompt),
             ])

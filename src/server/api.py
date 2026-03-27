@@ -352,8 +352,6 @@ async def reset_chroma() -> dict:
     """重置整个向量数据库（删除所有集合，包括文档 chunks）."""
     try:
         from src.document_processor import get_document_store
-        import shutil
-        from src.config import CHROMA_PATH
 
         # 清空 memory store
         store = get_memory_store()
@@ -656,12 +654,15 @@ async def upload_document(
         get_document_store,
         is_docx_zip_blob,
         is_legacy_word_doc,
+        normalize_zip_upload_bytes,
+        pdf_upload_failure_hint,
     )
 
     try:
         content = await file.read()
         filename = file.filename or "unknown"
         doc_type = detect_doc_type(filename)
+        content = normalize_zip_upload_bytes(content, doc_type)
         size = len(content)
 
         logger.info(f"[upload] received file: {filename}, type: {doc_type}, size: {size} bytes")
@@ -676,7 +677,12 @@ async def upload_document(
             logger.info(f"[upload] extracted text length: {len(text) if text else 0} chars")
             if not (text or "").strip():
                 err = "未能从文件中提取到文本（空文件、加密文档或缺少解析依赖）。"
-                if doc_type == "docx":
+                if size == 0:
+                    err = (
+                        "上传内容为空（0 字节），服务器未收到文件数据。"
+                        "请重新选择本地文件后再试；若文件在网盘同步目录，请确认已同步完成。"
+                    )
+                elif doc_type == "docx":
                     if is_legacy_word_doc(content):
                         err = (
                             "该文件为旧版 Word 二进制格式（.doc），不是 .docx。"
@@ -743,58 +749,53 @@ async def delete_document(doc_id: str) -> dict:
 #  Crayfish 多 Agent 编排端点 (SSE 流式)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from typing import Union
+import json as _json
 
 
-@router.get("/orchestrate")
-async def orchestrate(
-    requirement: str,
-    enabled_agents: str = "[\"search\",\"rag\",\"coder\"]",
-    quality_threshold: float = 8.0,
-    thread_id: str = "orchestrate",
-) -> StreamingResponse:
+@router.post("/orchestrate")
+async def orchestrate(req: OrchestrateRequest) -> StreamingResponse:
     """
     任务编排端点 — SSE 流式推送每个节点的状态变化。
 
-    注意：EventSource (SSE) 只支持 GET 请求，参数通过 URL query string 传递。
+    SSE 格式：
+        event: <type>
+        data: <json_payload>
+
+    其中 <json_payload> 包含 {type, data: {...}}（与 orchestrator._emit 格式一致）。
 
     工作流程：
     1. Supervisor 接收需求，生成 JSON Plan（最多 3 个子任务）
     2. 并行/顺序分发任务给 Search Worker / RAG Worker / Coder Worker
-    3. SSE 流式推送每个节点的状态变化（supervisor_plan, worker_start, worker_done, ...）
+    3. SSE 流式推送每个节点的状态变化
     4. 最终汇总结果并推送 final_result
     """
-    import json as _json
-
-    # 解析 enabled_agents JSON 字符串
-    try:
-        parsed_agents = _json.loads(enabled_agents)
-    except Exception:
-        parsed_agents = ["search", "rag", "coder"]
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        # 进度回调：每个 dict 事件转为 SSE data 块
-        async def emit(event: dict):
+        # 进度回调：将每个 orchestrator 事件转为标准的 SSE 行
+        async def collector(event: dict) -> None:
+            ev_type = event.get("type", "message")
             payload = _json.dumps(event, ensure_ascii=False)
-            yield f"data: {payload}\n\n"
+            yield f"event: {ev_type}\ndata: {payload}\n\n"
 
         try:
             from src.graph.orchestrator import get_orchestrator
 
             orchestrator = get_orchestrator()
+            # orchestrator.orchestrate 是 async def，需要 await
+            # 它内部用 for await _emit(collector, e) 消费事件
             await orchestrator.orchestrate(
-                requirement=requirement,
-                enabled_agents=parsed_agents,
-                quality_threshold=quality_threshold,
-                progress_callback=emit,
+                requirement=req.requirement,
+                enabled_agents=req.enabled_agents,
+                quality_threshold=req.quality_threshold,
+                progress_callback=collector,
             )
 
         except Exception as e:
             logger.error(f"[orchestrate] orchestration error: {e}", exc_info=True)
-            yield f"data: {_json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            err_payload = _json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
+            yield f"event: error\ndata: {err_payload}\n\n"
 
-        finally:
-            yield f"data: {_json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        yield f"event: done\ndata: {{\"type\": \"done\"}}\n\n"
 
     return StreamingResponse(
         event_generator(),

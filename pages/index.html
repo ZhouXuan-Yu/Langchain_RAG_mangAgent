@@ -467,21 +467,21 @@ function chatOnShow(savedState) {
     });
   }
 
-  // 恢复聊天状态
+  console.log('[SPA chatOnShow] savedState keys:', savedState ? Object.keys(savedState) : 'none', '| msgs:', G.msgs.length);
   if (savedState) {
     if (savedState.msgsHtml && document.getElementById('chat-msgs')) {
       document.getElementById('chat-msgs').innerHTML = savedState.msgsHtml;
       G.msgs = savedState.msgs || [];
       G.tools = savedState.tools || [];
-      if (document.getElementById('tool-num')) {
-        document.getElementById('tool-num').textContent = savedState.toolNum || '0';
-      }
-      if (savedState.toolHtml && document.getElementById('tool-log')) {
-        document.getElementById('tool-log').innerHTML = savedState.toolHtml;
-      }
-      if (document.getElementById('msg-count')) {
-        document.getElementById('msg-count').textContent = G.msgs.length;
-      }
+      document.getElementById('tool-num').textContent = G.tools.length;
+    }
+    // 恢复工具容器
+    if (savedState.toolContainerHtml) {
+      var container = document.querySelector('.tool-log-container');
+      if (container) container.innerHTML = savedState.toolContainerHtml;
+    }
+    if (document.getElementById('msg-count')) {
+      document.getElementById('msg-count').textContent = G.msgs.length;
     }
   }
 
@@ -490,12 +490,12 @@ function chatOnShow(savedState) {
 
 // ── 对话页：状态保存回调 ───────────────────────────────────────
 function chatOnSave() {
+  var container = document.querySelector('.tool-log-container');
   return {
     msgs: G.msgs,
     tools: G.tools,
-    toolNum: document.getElementById('tool-num') ? document.getElementById('tool-num').textContent : '0',
-    toolHtml: document.getElementById('tool-log') ? document.getElementById('tool-log').innerHTML : '',
-    msgsHtml: document.getElementById('chat-msgs') ? document.getElementById('chat-msgs').innerHTML : ''
+    msgsHtml: document.getElementById('chat-msgs') ? document.getElementById('chat-msgs').innerHTML : '',
+    toolContainerHtml: container ? container.innerHTML : ''
   };
 }
 
@@ -518,8 +518,9 @@ loadConfig(function(c) {
 chatOnShow(null);
 
 /* ── 发送消息 ──────────────────────────────────────────── */
-var _currentQAId = 0;
-var _currentQAId_Active = null;  // 当前会话的工具块 ID（用于恢复状态）
+var _currentTaskId_Active = null;
+var _taskBlockToolSeq = 0;
+var _streamController = null;
 
 function chatSend() {
   var inp = document.getElementById('chat-text-input');
@@ -534,30 +535,22 @@ function chatSend() {
 
   updateToolbarStat('busy');
 
-  // 创建新的问答工具调用折叠块
-  _currentQAId++;
-  var qaId = 'qa-' + _currentQAId;
-  _currentQAId_Active = qaId;  // 记住当前工具块 ID
-  var toolContainer = document.querySelector('.tool-log-container');
-  if (toolContainer) {
-    toolContainer.innerHTML = '<details class="qa-tool-block" id="' + qaId + '" open>' +
-      '<summary class="qa-tool-header">' +
-        '<span class="qa-label"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span>工具调用</span></span>' +
-        '<span class="qa-toggle">▼</span>' +
-      '</summary>' +
-      '<div class="qa-tool-body"><div id="tool-log"></div></div>' +
-    '</details>';
-  }
-  G.tools = [];
-
   chatAddMsg('user', text);
   G.msgs.push({role: 'user', content: text});
   var aiBub = chatAddMsg('assistant', '', true);
 
+  _currentTaskId_Active = null;
+  _taskBlockToolSeq = 0;
+  G.tools = [];
+
+  _streamController = new AbortController();
+  console.log('[SPA chatSend] stream started, abort controller:', !!_streamController);
+
   fetch('/api/chat/stream', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({message: text, thread_id: G.threadId, model: G.model})
+    body: JSON.stringify({message: text, thread_id: G.threadId, model: G.model}),
+    signal: _streamController.signal
   }).then(function(r) {
     if (!r.ok) {
       if (aiBub) aiBub.innerHTML = '<p style="color:#f87171">请求失败: ' + r.status + '</p>';
@@ -574,8 +567,9 @@ function chatSend() {
           if (full && aiBub) aiBub.innerHTML = md(full);
           G.busy = false; if (btn) btn.disabled = false; updateToolbarStat('idle');
           updateMsgCount();
-          // 更新工具调用块标题
-          updateToolBlockTitle();
+          closeTaskBlock();
+          updateToolPanelHeader();
+          _streamController = null;
           return;
         }
         buf += decoder.decode(result.value, {stream: true});
@@ -591,38 +585,18 @@ function chatSend() {
               if (aiBub) aiBub.innerHTML = md(full) + '<div class="loading-dots" style="margin-top:6px"><span></span><span></span><span></span></div>';
               scrollBot(document.getElementById('chat-msgs'));
             } else if (d.type === 'tool') {
-              chatAddTool(d.name, d.input, d.result);
+              ensureTaskBlock();
+              chatAddToolCard(d.name, d.input, d.result);
             } else if (d.type === 'tool_result') {
-              // 工具执行结果（更新已有工具条目的结果区）
-              var existingTool = null;
-              var toolEntries = document.querySelectorAll('.tool-entry');
-              for (var ti = toolEntries.length - 1; ti >= 0; ti--) {
-                var nameEl = toolEntries[ti].querySelector('.tool-entry-name');
-                if (nameEl && nameEl.textContent === d.name) {
-                  existingTool = toolEntries[ti];
-                  break;
-                }
-              }
-              if (existingTool) {
-                var resultDiv = existingTool.querySelector('.tool-entry-result');
-                if (resultDiv) {
-                  resultDiv.textContent = String(d.result || '').slice(0, 300);
-                } else {
-                  var dataDiv = existingTool.querySelector('.tool-entry-data');
-                  if (dataDiv) {
-                    var newResult = document.createElement('div');
-                    newResult.className = 'tool-entry-result';
-                    newResult.textContent = String(d.result || '').slice(0, 300);
-                    dataDiv.parentNode.insertBefore(newResult, dataDiv.nextSibling);
-                  }
-                }
-              }
+              updateToolCardResult(d.name, d.result);
             } else if (d.type === 'done') {
               if (aiBub) aiBub.innerHTML = md(full);
               G.msgs.push({role: 'assistant', content: full});
               loadChatMem();
               updateMsgCount();
-              updateToolBlockTitle();
+              closeTaskBlock();
+              updateToolPanelHeader();
+              _streamController = null;
             } else if (d.type === 'error') {
               if (aiBub) aiBub.innerHTML = '<p style="color:#f87171">错误: ' + esc(d.content) + '</p>';
             }
@@ -630,31 +604,121 @@ function chatSend() {
         }
         read();
       }).catch(function(e) {
+        if (e.name === 'AbortError') return;
         if (aiBub) aiBub.innerHTML = '<p style="color:#f87171">连接错误: ' + esc(e.message) + '</p>';
         G.busy = false; if (btn) btn.disabled = false; updateToolbarStat('error');
+        _streamController = null;
       });
     }
     read();
   }).catch(function(e) {
+    if (e.name === 'AbortError') return;
     if (aiBub) aiBub.innerHTML = '<p style="color:#f87171">连接错误: ' + esc(e.message) + '</p>';
     G.busy = false; if (btn) btn.disabled = false; updateToolbarStat('error');
+    _streamController = null;
   });
 }
 
-function updateToolBlockTitle() {
-  // 优先找当前活跃的工具块
-  var block = _currentQAId_Active ? document.getElementById(_currentQAId_Active) : null;
-  if (!block) {
-    // 后备：找最新的 qa 块
-    var allBlocks = document.querySelectorAll('.qa-tool-block');
-    if (allBlocks.length > 0) block = allBlocks[allBlocks.length - 1];
+/* ── 任务块管理 ──────────────────────────────────────────── */
+function ensureTaskBlock() {
+  if (_currentTaskId_Active && document.getElementById(_currentTaskId_Active)) return;
+  _taskBlockToolSeq = 0;
+  _currentTaskId_Active = 'task-' + Date.now();
+  var container = document.querySelector('.tool-log-container');
+  if (!container) return;
+  // 清空空状态占位
+  var empty = container.querySelector('.empty-state');
+  if (empty) empty.remove();
+  var block = document.createElement('details');
+  block.className = 'task-block';
+  block.id = _currentTaskId_Active;
+  block.innerHTML =
+    '<summary class="task-header">' +
+      '<div class="task-header-left">' +
+        '<div class="task-header-icon"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>' +
+        '<span class="task-header-title">任务执行中</span>' +
+      '</div>' +
+      '<span class="task-header-badge" id="' + _currentTaskId_Active + '-badge">0 个工具</span>' +
+      '<span class="task-toggle">&#9660;</span>' +
+    '</summary>' +
+    '<div class="task-body" id="' + _currentTaskId_Active + '-body"></div>';
+  block.setAttribute('open', '');
+  container.insertBefore(block, container.firstChild);
+}
+
+function closeTaskBlock() {
+  if (!_currentTaskId_Active) return;
+  var block = document.getElementById(_currentTaskId_Active);
+  if (block) {
+    block.removeAttribute('open');
+    var titleEl = block.querySelector('.task-header-title');
+    if (titleEl) titleEl.textContent = '任务完成';
+    var badgeEl = block.querySelector('.task-header-badge');
+    if (badgeEl) badgeEl.textContent = G.tools.length + ' 个工具';
   }
-  if (block && G.tools.length > 0) {
-    var label = block.querySelector('.qa-label span:last-child');
-    if (label) label.textContent = '工具调用 (' + G.tools.length + ')';
-  }
+  _currentTaskId_Active = null;
+}
+
+function updateToolPanelHeader() {
   var toolNumEl = document.getElementById('tool-num');
   if (toolNumEl) toolNumEl.textContent = G.tools.length;
+}
+
+function updateToolBlockTitle() { updateToolPanelHeader(); }
+
+/* ── 添加工具卡片 ─────────────────────────────────────────── */
+function chatAddToolCard(name, input, result) {
+  _taskBlockToolSeq++;
+  var bodyId = _currentTaskId_Active + '-body';
+  var body = document.getElementById(bodyId);
+  if (!body) return;
+
+  var toolId = 'tool-card-' + _taskBlockToolSeq;
+  G.tools.push({id: toolId, name: name, input: input});
+
+  var inputStr = '';
+  if (input) inputStr = typeof input === 'object' ? JSON.stringify(input, null, 2) : String(input);
+
+  var card = document.createElement('details');
+  card.className = 'tool-card';
+  card.id = toolId;
+  card.innerHTML =
+    '<summary>' +
+      '<div class="tool-card-left">' +
+        '<span class="tool-seq">#' + _taskBlockToolSeq + '</span>' +
+        '<span class="tool-name">' + esc(name) + '</span>' +
+        '<span class="tool-status-dot busy" id="' + toolId + '-dot"></span>' +
+      '</div>' +
+      '<span class="tool-toggle-icon">&#9660;</span>' +
+    '</summary>' +
+    '<div class="tool-card-content">' +
+      (inputStr ? '<div class="tool-data-label">&#36755;&#20837;&#21442;&#25968;</div><div class="tool-data-value" id="' + toolId + '-input">' + esc(inputStr) + '</div>' : '') +
+      '<div class="tool-result-label">&#25191;&#34892;&#32467;&#26524;</div>' +
+      '<div class="tool-result-value" id="' + toolId + '-result">&#31561;&#24453;&#32467;&#26524;...</div>' +
+    '</div>';
+  body.appendChild(card);
+  card.setAttribute('open', '');
+
+  var badge = document.getElementById(_currentTaskId_Active + '-badge');
+  if (badge) badge.textContent = G.tools.length + ' 个工具';
+
+  var container = document.querySelector('.tool-log-container');
+  if (container) container.scrollTop = container.scrollHeight;
+}
+
+function updateToolCardResult(name, result) {
+  var cards = document.querySelectorAll('.tool-card');
+  for (var ci = cards.length - 1; ci >= 0; ci--) {
+    var card = cards[ci];
+    var nameEl = card.querySelector('.tool-name');
+    if (nameEl && nameEl.textContent === name) {
+      var dot = card.querySelector('.tool-status-dot');
+      if (dot) { dot.classList.remove('busy'); dot.classList.add('done'); }
+      var resultEl = document.getElementById(card.id + '-result');
+      if (resultEl) resultEl.textContent = String(result || '').slice(0, 500);
+      break;
+    }
+  }
 }
 
 function updateToolbarStat(state) {
@@ -694,36 +758,6 @@ function chatAddMsg(role, content, loading) {
   box.appendChild(row);
   scrollBot(box);
   return bub;
-}
-
-function chatAddTool(name, inp, result) {
-  var log = document.getElementById('tool-log');
-  if (!log) return;
-  var empty = log.querySelector('.empty-state');
-  if (empty) empty.remove();
-  var item = document.createElement('div');
-  item.className = 'tool-entry';
-  var data = inp;
-  if (typeof inp === 'object') {
-    try { data = JSON.stringify(inp, null, 2).slice(0, 300); } catch(e) { data = String(inp); }
-  }
-  var seq = G.tools.length + 1;
-  var resultHtml = '';
-  if (result) {
-    resultHtml = '<div class="tool-entry-result">' + esc(String(result).slice(0, 150)) + '</div>';
-  }
-  item.innerHTML = '<div class="tool-entry-header">' +
-    '<span class="tool-entry-name">' + esc(name) + '</span>' +
-    '<span class="tool-entry-seq">#' + seq + '</span>' +
-    '</div>' +
-    '<div class="tool-entry-data">' + esc(String(data)) + '</div>' +
-    resultHtml;
-  log.appendChild(item);
-  // 确保容器滚动到底部
-  var container = document.querySelector('.tool-log-container');
-  if (container) container.scrollTop = container.scrollHeight;
-  G.tools.push({name: name, input: inp, result: result});
-  updateToolBlockTitle();
 }
 
 function loadChatMem() {
@@ -766,6 +800,8 @@ function chatClearAll() {
   if (!confirm('确定要清空当前对话记录吗？\n（长期记忆不会被清除）')) return;
   var box = document.getElementById('chat-msgs');
   if (box) box.innerHTML = '<div class="empty-state" id="chat-empty"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>发送消息开始对话<br><span style="opacity:0.5;font-size:11px">Agent 会记住你的偏好和上下文</span></p></div>';
+  var toolContainer = document.querySelector('.tool-log-container');
+  if (toolContainer) toolContainer.innerHTML = '<div class="empty-state" style="padding:16px 0"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><p>工具调用记录<br>显示在这里</p></div>';
   G.msgs = [];
   G.tools = [];
   updateMsgCount();

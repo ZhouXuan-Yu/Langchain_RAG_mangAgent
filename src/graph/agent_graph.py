@@ -148,7 +148,7 @@ def build_react_agent(
     """
     from langgraph.prebuilt import create_react_agent
 
-    tools = [web_search, browse_page, calculator, memory_search, save_memory]
+    tools = [web_search, browse_page, calculator, memory_search, save_memory, process_image]
 
     # 应用中间件
     interceptors = []

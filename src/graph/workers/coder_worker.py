@@ -110,7 +110,6 @@ class CoderWorker:
         from langchain_core.messages import HumanMessage, SystemMessage
 
         llm = init_deepseek_llm(temperature=0.3, streaming=False)
-
         prompt = f"""你是一个专业的 Python 开发者。请根据以下需求和上下文生成代码。
 
 需求描述:
@@ -127,7 +126,7 @@ class CoderWorker:
 
 请直接输出代码，不要解释。"""
 
-        response = llm.invoke([
+        response = await llm.invoke([
             SystemMessage(content="你是一个专业的 Python 开发者，擅长编写高质量代码。"),
             HumanMessage(content=prompt),
         ])

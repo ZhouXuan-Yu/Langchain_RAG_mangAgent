@@ -192,6 +192,10 @@ function kbHandleFiles(files) {
   for (var i = 0; i < files.length; i++) {
     var f = files[i];
     (function(file) {
+      if (!file.size) {
+        toast('跳过空文件: ' + file.name, 'error');
+        return;
+      }
       var fd = new FormData();
       fd.append('file', file);
       promises.push(

@@ -141,9 +141,30 @@ def is_legacy_word_doc(content: bytes) -> bool:
     return bool(content) and len(content) >= 8 and content[:8] == _OLE_DOC_MAGIC
 
 
+_UTF8_BOM = b"\xef\xbb\xbf"
+_ZIP_UPLOAD_DOC_TYPES = frozenset({"docx", "excel"})
+
+
+def normalize_zip_upload_bytes(content: bytes, doc_type: str) -> bytes:
+    """
+    部分工具会在 OOXML（ZIP）文件前写入 UTF-8 BOM，导致 ZipFile 无法打开。
+    仅对 docx / excel（xlsx）做剥离，避免误伤其它二进制类型。
+    """
+    if doc_type not in _ZIP_UPLOAD_DOC_TYPES or not content:
+        return content
+    if content.startswith(_UTF8_BOM):
+        return content[len(_UTF8_BOM) :]
+    return content
+
+
 def is_docx_zip_blob(content: bytes) -> bool:
-    """是否为 ZIP 包（标准 .docx / .xlsx 均以 PK 开头）."""
-    return bool(content) and len(content) >= 4 and content[:2] == b"PK"
+    """是否为有效 ZIP 容器（标准 .docx / .xlsx；兼容前置 UTF-8 BOM）."""
+    if not content:
+        return False
+    body = content[len(_UTF8_BOM) :] if content.startswith(_UTF8_BOM) else content
+    if len(body) < 4:
+        return False
+    return zipfile.is_zipfile(io.BytesIO(body))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -188,25 +209,131 @@ def extract_text(content: bytes, doc_type: str) -> str:
         return ""
 
 
-def _extract_pdf(content: bytes) -> str:
+def pdf_is_password_protected(content: bytes) -> bool:
+    """检测 PDF 是否需要密码（无法解密则无法提取正文）."""
+    if not content:
+        return False
+    try:
+        import fitz
+
+        doc = fitz.open(stream=content, filetype="pdf")
+        try:
+            return bool(doc.needs_pass)
+        finally:
+            doc.close()
+    except Exception:
+        pass
     try:
         import pypdf
 
         reader = pypdf.PdfReader(io.BytesIO(content))
-        texts = []
-        for page in reader.pages:
-            text = page.extract_text()
-            if text:
-                texts.append(text)
-        result = "\n\n".join(texts)
-        logger.info(f"[pdf] extracted {len(texts)} pages, total {len(result)} chars")
-        return result
+        return bool(getattr(reader, "is_encrypted", False))
+    except Exception:
+        return False
+
+
+def pdf_upload_failure_hint(content: bytes) -> str:
+    """提取失败时给用户的补充说明."""
+    if pdf_is_password_protected(content):
+        return "该 PDF 已加密或需要密码，请先解除限制或「打印为 PDF」导出后再上传。"
+    return (
+        "未识别到可抽取的文字层：常见于扫描版（纯图片）PDF。"
+        "请使用 Word/WPS 打开后另存为带文字层的 PDF，或使用 OCR 工具识别后再上传。"
+    )
+
+
+def _extract_pdf(content: bytes) -> str:
+    """
+    依次尝试 PyMuPDF → pypdf → pdfplumber，取最长结果。
+    PyMuPDF 对中文、学术排版、嵌入字体 PDF 兼容性通常最好。
+    """
+    methods: list[tuple[str, str]] = []
+
+    # 1. PyMuPDF（优先）
+    try:
+        import fitz
+
+        doc = fitz.open(stream=content, filetype="pdf")
+        try:
+            if doc.needs_pass:
+                logger.warning("[pdf] PyMuPDF: document requires password")
+                return ""
+            pieces: list[str] = []
+            for page in doc:
+                t = page.get_text()
+                if t and t.strip():
+                    pieces.append(t)
+            joined = "\n\n".join(pieces)
+            if joined.strip():
+                methods.append(("pymupdf", joined))
+                logger.info("[pdf] pymupdf extracted %s pages, %s chars", doc.page_count, len(joined))
+            else:
+                logger.debug("[pdf] pymupdf: 0 chars (may be image-only or odd encoding)")
+        finally:
+            doc.close()
     except ImportError:
-        logger.warning("[doc_processor] pypdf not installed, returning empty")
-        return ""
+        logger.warning("[pdf] pymupdf (fitz) not installed — run: pip install pymupdf")
     except Exception as e:
-        logger.warning(f"[doc_processor] PDF extraction error: {e}", exc_info=True)
+        logger.warning("[pdf] pymupdf error: %s", e, exc_info=True)
+
+    # 2. pypdf
+    try:
+        import pypdf
+
+        reader = pypdf.PdfReader(io.BytesIO(content))
+        if getattr(reader, "is_encrypted", False):
+            try:
+                if reader.decrypt("") == 0:
+                    logger.warning("[pdf] pypdf: encrypted PDF, cannot decrypt without password")
+                    if not methods:
+                        return ""
+            except Exception:
+                if not methods:
+                    return ""
+        pypdf_texts: list[str] = []
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                pypdf_texts.append(t)
+        joined = "\n\n".join(pypdf_texts)
+        if joined.strip():
+            methods.append(("pypdf", joined))
+            logger.info("[pdf] pypdf extracted %s pages, %s chars", len(pypdf_texts), len(joined))
+        else:
+            logger.debug("[pdf] pypdf extracted 0 chars")
+    except ImportError:
+        logger.warning("[pdf] pypdf not installed — run: pip install pypdf")
+    except Exception as e:
+        logger.warning("[pdf] pypdf error: %s", e)
+
+    # 3. pdfplumber
+    try:
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            plumb_texts: list[str] = []
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    plumb_texts.append(t)
+        joined = "\n\n".join(plumb_texts)
+        if joined.strip():
+            methods.append(("pdfplumber", joined))
+            logger.info("[pdf] pdfplumber extracted %s pages, %s chars", len(plumb_texts), len(joined))
+        else:
+            logger.debug("[pdf] pdfplumber extracted 0 chars")
+    except ImportError:
+        logger.debug("[pdf] pdfplumber not installed")
+    except Exception as e:
+        logger.warning("[pdf] pdfplumber error: %s", e)
+
+    if not methods:
+        logger.warning("[pdf] all extractors returned empty — likely image-only/scanned PDF or unsupported encoding")
         return ""
+
+    best_lib, best_text = max(methods, key=lambda x: len(x[1]))
+    logger.info("[pdf] using %s result (%s chars)", best_lib, len(best_text))
+    return best_text
 
 
 _W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -317,6 +444,7 @@ def _merge_docx_extractions(api_text: str, ooxml_text: str) -> str:
 
 
 def _extract_docx(content: bytes) -> str:
+    content = normalize_zip_upload_bytes(content, "docx")
     if is_legacy_word_doc(content):
         logger.warning("[doc_processor] file is legacy .doc (OLE), not Office Open XML — cannot parse as docx")
         return ""
@@ -360,6 +488,7 @@ def _extract_csv(content: bytes) -> str:
 
 def _extract_excel(content: bytes) -> str:
     """提取 Excel 文件的文本内容（支持 .xlsx 和 .xls）."""
+    content = normalize_zip_upload_bytes(content, "excel")
     try:
         import pandas as pd
 

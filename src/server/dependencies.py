@@ -17,10 +17,14 @@ from src.config import (
     MAX_TOKENS,
     CHECKPOINT_PATH,
     CHROMA_PATH,
+    USER_NAME,
+    USER_TECH_STACK,
+    USER_HARDWARE,
+    USER_PROJECTS,
 )
 from src.llm import init_deepseek_llm
 from src.memory.sqlite_store import get_sqlite_checkpointer, get_async_sqlite_checkpointer
-from src.graph import build_agent_graph
+from src.graph import build_react_agent
 
 # ── 全局 Agent 注册表（按模型缓存）────────────────────────────────────────────
 _agent_registry: dict[str, Any] = {}
@@ -64,9 +68,9 @@ async def _get_async_checkpointer() -> BaseCheckpointSaver:
 
 async def get_agent(model: Optional[str] = None) -> Any:
     """
-    获取（或按需构建）指定模型的编译 Agent Graph.
+    获取（或按需构建）指定模型的 ReAct Agent.
 
-    同一模型的 Agent 只构建一次，后续复用。
+    使用 create_react_agent 构建，完整支持 LLM 工具调用和 astream_events。
     """
     key = model or _current_model
     if key not in _agent_registry:
@@ -78,9 +82,21 @@ async def get_agent(model: Optional[str] = None) -> Any:
             streaming=True,
         )
         checkpointer = await _get_async_checkpointer()
-        _agent_registry[key] = build_agent_graph(
+        system_prompt = (
+            f"你是一个专业的 AI 助手，用户名为「{USER_NAME}」。\n"
+            f"用户的技术栈: {', '.join(USER_TECH_STACK)}。\n"
+            f"用户的 GPU 硬件: {USER_HARDWARE}。\n"
+            f"用户的项目: {', '.join(USER_PROJECTS)}。\n"
+            "请结合用户的背景信息，提供精准、有帮助的回答。\n"
+            "当需要搜索最新信息时，使用 web_search 工具。\n"
+            "当需要检索用户的记忆/偏好时，使用 memory_search 工具。\n"
+            "当需要保存重要信息到记忆时，使用 save_memory 工具。\n"
+            "当需要计算时，使用 calculator 工具。"
+        )
+        _agent_registry[key] = build_react_agent(
             llm,
             checkpointer=checkpointer,
+            system_prompt=system_prompt,
             enable_middleware=True,
         )
         logger.info(f"[agent_registry] agent cached: key={key}")

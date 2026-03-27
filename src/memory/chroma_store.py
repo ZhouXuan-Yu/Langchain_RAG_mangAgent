@@ -29,12 +29,23 @@ class ChromaMemoryStore:
        - 相似度 > threshold + 内容重复 → 忽略
     """
 
+    _instance: Optional["ChromaMemoryStore"] = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
     def __init__(
         self,
         collection_name: str = CHROMA_COLLECTION_NAME,
         path: str | None = None,
         threshold: float = UPSERT_SIMILARITY_THRESHOLD,
     ):
+        if self._initialized:
+            return
+        self._initialized = True
         self.client = chromadb.PersistentClient(
             path=str(path or CHROMA_PATH)
         )
@@ -177,8 +188,13 @@ class ChromaMemoryStore:
 
     def clear(self) -> None:
         """清空所有记忆（危险操作）."""
-        self.client.delete_collection(name=self.collection.name)
+        try:
+            self.client.delete_collection(name=self.collection.name)
+        except Exception:
+            pass
+        # 重建集合并更新实例引用
         self.collection = self.client.get_or_create_collection(
             name=self.collection.name,
             metadata={"hnsw:space": "cosine"},
         )
+        logger.info("[memory] collection cleared and rebuilt")

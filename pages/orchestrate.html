@@ -86,23 +86,19 @@
     .orch-btn.primary:disabled { opacity: 0.5; cursor: not-allowed; }
     .orch-btn.running { animation: orchPulse 1.5s ease-in-out infinite; }
     @keyframes orchPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
-    /* agent config */
+    /* agent toggle — flex row: [checkbox] [check-box] [dot+label] */
     .agent-toggle {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       padding: 8px 0;
       border-bottom: 1px solid rgba(42,42,42,0.6);
+      cursor: pointer;
     }
     .agent-toggle:last-child { border-bottom: none; }
+    /* hide native checkbox */
     .agent-toggle input[type=checkbox] { display: none; }
-    .agent-toggle-label {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      flex: 1;
-    }
+    /* custom check box — now a sibling of input, inside label via for= */
     .agent-check-box {
       width: 18px;
       height: 18px;
@@ -115,6 +111,7 @@
       transition: all 150ms;
       flex-shrink: 0;
     }
+    /* sibling selector: input:checked ~ .agent-check-box */
     .agent-toggle input:checked ~ .agent-check-box {
       background: rgba(139,0,0,0.3);
       border-color: var(--noir-accent-hi);
@@ -129,6 +126,7 @@
       transform: rotate(45deg) translate(-1px, -1px);
       display: block;
     }
+    .agent-meta { display: flex; align-items: center; gap: 8px; }
     .agent-dot {
       width: 8px;
       height: 8px;
@@ -175,10 +173,7 @@
       gap: 14px;
       overflow: hidden;
     }
-    .orch-vis {
-      flex: 0 0 auto;
-      min-height: 200px;
-    }
+    .orch-vis { flex: 0 0 auto; min-height: 200px; }
     .orch-graph {
       display: flex;
       align-items: center;
@@ -210,12 +205,7 @@
       color: var(--noir-dim);
       margin-top: 3px;
     }
-    /* arrow */
-    .graph-arrow {
-      color: var(--noir-muted);
-      font-size: 18px;
-      flex-shrink: 0;
-    }
+    .graph-arrow { color: var(--noir-muted); font-size: 18px; flex-shrink: 0; }
     /* worker node */
     .node-worker {
       border-radius: 10px;
@@ -233,12 +223,7 @@
     .node-worker.done { border-color: rgba(74,222,128,0.4); background: rgba(74,222,128,0.05); }
     .node-worker.rejected { border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.05); }
     .node-worker.healing { border-color: rgba(250,204,21,0.4); background: rgba(250,204,21,0.05); }
-    .worker-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      margin: 0 auto 6px;
-    }
+    .worker-dot { width: 8px; height: 8px; border-radius: 50%; margin: 0 auto 6px; }
     .worker-dot.search { background: #4ade80; }
     .worker-dot.rag { background: #60a5fa; }
     .worker-dot.coder { background: #facc15; }
@@ -249,55 +234,20 @@
       text-transform: uppercase;
       letter-spacing: 0.05em;
     }
-    .node-worker .node-sub {
-      font-size: 10px;
-      color: var(--noir-dim);
-      margin-top: 3px;
-    }
-    .node-score {
-      position: absolute;
-      top: 6px;
-      right: 8px;
-      font-family: 'Courier Prime', monospace;
-      font-size: 9px;
-      color: var(--noir-dim);
-    }
-    /* loop counter */
+    .node-worker .node-sub { font-size: 10px; color: var(--noir-dim); margin-top: 3px; }
+    .node-score { position: absolute; top: 6px; right: 8px; font-family: 'Courier Prime', monospace; font-size: 9px; color: var(--noir-dim); }
     .loop-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 3px 8px;
-      border-radius: 4px;
-      font-family: 'Courier Prime', monospace;
-      font-size: 10px;
-      background: rgba(139,0,0,0.1);
-      border: 1px solid rgba(139,0,0,0.3);
-      color: #c0392b;
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px; border-radius: 4px;
+      font-family: 'Courier Prime', monospace; font-size: 10px;
+      background: rgba(139,0,0,0.1); border: 1px solid rgba(139,0,0,0.3); color: #c0392b;
     }
     /* logs */
-    .orch-logs {
-      flex: 1;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-    }
-    .log-body {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px 4px;
-    }
+    .orch-logs { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    .log-body { flex: 1; overflow-y: auto; padding: 8px 4px; }
     .log-body::-webkit-scrollbar { width: 3px; }
     .log-body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-    .log-entry {
-      display: flex;
-      gap: 10px;
-      padding: 4px 0;
-      font-family: 'Courier Prime', monospace;
-      font-size: 11px;
-      line-height: 1.5;
-      animation: logSlide 200ms ease both;
-    }
+    .log-entry { display: flex; gap: 10px; padding: 4px 0; font-family: 'Courier Prime', monospace; font-size: 11px; line-height: 1.5; animation: logSlide 200ms ease both; }
     @keyframes logSlide { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
     .log-time { color: var(--noir-muted); flex-shrink: 0; }
     .log-agent { flex-shrink: 0; min-width: 80px; }
@@ -308,139 +258,49 @@
     .log-agent.self_healer { color: #facc15; }
     .log-agent.system { color: var(--noir-dim); }
     .log-msg { color: var(--noir-text); word-break: break-all; }
-    /* plan */
-    .plan-view { padding: 8px 4px; }
-    .plan-task {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      padding: 6px 0;
-      border-bottom: 1px solid rgba(42,42,42,0.5);
-    }
-    .plan-task:last-child { border-bottom: none; }
-    .plan-task-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      margin-top: 5px;
-      flex-shrink: 0;
-    }
-    .plan-task-text { font-family: 'Courier Prime', monospace; font-size: 11px; color: var(--noir-dim); line-height: 1.5; }
-    .plan-task-agent { font-size: 9px; color: var(--noir-muted); margin-top: 2px; }
     /* final result */
-    .orch-result {
-      flex: 0 0 auto;
-      max-height: 280px;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-    }
-    .result-body {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px 4px;
-    }
+    .orch-result { flex: 0 0 auto; max-height: 280px; overflow: hidden; display: flex; flex-direction: column; }
+    .result-body { flex: 1; overflow-y: auto; padding: 8px 4px; }
     .result-body::-webkit-scrollbar { width: 3px; }
     .result-body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
     .result-content {
-      background: var(--noir-surface);
-      border: 1px solid var(--noir-border);
-      border-radius: 8px;
-      padding: 14px;
-      font-family: 'Courier Prime', monospace;
-      font-size: 11px;
-      color: var(--noir-text);
-      line-height: 1.7;
-      white-space: pre-wrap;
-      word-break: break-all;
+      background: var(--noir-surface); border: 1px solid var(--noir-border);
+      border-radius: 8px; padding: 14px;
+      font-family: 'Courier Prime', monospace; font-size: 11px;
+      color: var(--noir-text); line-height: 1.7;
+      white-space: pre-wrap; word-break: break-all;
     }
-    .result-quality {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-    .quality-bar-wrap {
-      flex: 1;
-      height: 6px;
-      background: var(--noir-border);
-      border-radius: 3px;
-      overflow: hidden;
-    }
-    .quality-bar {
-      height: 100%;
-      border-radius: 3px;
-      background: linear-gradient(90deg, #c0392b, #e74c3c);
-      transition: width 600ms ease;
-    }
+    .result-quality { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .quality-bar-wrap { flex: 1; height: 6px; background: var(--noir-border); border-radius: 3px; overflow: hidden; }
+    .quality-bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #c0392b, #e74c3c); transition: width 600ms ease; }
     .quality-bar.high { background: linear-gradient(90deg, #27ae60, #2ecc71); }
-    .quality-score-label {
-      font-family: 'Courier Prime', monospace;
-      font-size: 13px;
-      color: #c0392b;
-      font-weight: 700;
-    }
+    .quality-score-label { font-family: 'Courier Prime', monospace; font-size: 13px; color: #c0392b; font-weight: 700; }
     .quality-score-label.high { color: #2ecc71; }
-    /* pass/fail badge */
     .result-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 3px 10px;
-      border-radius: 4px;
-      font-family: 'Courier Prime', monospace;
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      margin-left: 10px;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 4px;
+      font-family: 'Courier Prime', monospace; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.06em; margin-left: 10px;
     }
     .result-badge.pass { background: rgba(39,174,96,0.15); border: 1px solid rgba(39,174,96,0.4); color: #2ecc71; }
     .result-badge.fail { background: rgba(192,57,43,0.15); border: 1px solid rgba(192,57,43,0.4); color: #c0392b; }
     /* empty state */
-    .orch-empty {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      color: var(--noir-muted);
-      font-family: 'Courier Prime', monospace;
-      font-size: 12px;
-      gap: 10px;
-    }
+    .orch-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--noir-muted); font-family: 'Courier Prime', monospace; font-size: 12px; gap: 10px; }
     .orch-empty svg { width: 40px; height: 40px; stroke: #333; fill: none; stroke-width: 1; }
     /* back btn */
     .back-row { display: flex; align-items: center; }
-    .back-btn {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 12px;
-      border-radius: 6px;
-      border: 1px solid var(--noir-border);
-      background: transparent;
-      color: var(--noir-dim);
-      font-size: 12px;
-      font-family: var(--font-sans);
-      cursor: pointer;
-      transition: all 150ms;
-    }
+    .back-btn { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--noir-border); background: transparent; color: var(--noir-dim); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 150ms; }
     .back-btn:hover { border-color: var(--noir-border-hi); color: var(--noir-text); }
     .back-btn svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; }
-    /* conflict badge */
     .conflict-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-family: 'Courier Prime', monospace;
-      font-size: 10px;
-      background: rgba(250,204,21,0.1);
-      border: 1px solid rgba(250,204,21,0.3);
-      color: #facc15;
-      margin-left: 8px;
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 4px;
+      font-family: 'Courier Prime', monospace; font-size: 10px;
+      background: rgba(250,204,21,0.1); border: 1px solid rgba(250,204,21,0.3); color: #facc15; margin-left: 8px;
     }
+    /* spinner in supervisor while waiting */
+    .spinner { display: inline-block; width: 10px; height: 10px; border: 1.5px solid var(--noir-border-hi); border-top-color: #c0392b; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to{transform:rotate(360deg)} }
   </style>
 </head>
 <body class="noir-theme">
@@ -451,13 +311,16 @@
 </div>
 
 <script>
-// ── Page content template ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  Page content template
+// ═══════════════════════════════════════════════════════════════════════════
 var ORCHESTRATE_CONTENT = [
   '<div class="orchestrate-page">',
-    // Left panel
+
+    // ── LEFT PANEL ──────────────────────────────────────────────────
     '<div class="orch-left">',
 
-      // Header row
+      // Back
       '<div class="back-row">',
         '<button class="back-btn" onclick="navigateTo(\'/tasks\')">',
           '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>',
@@ -479,32 +342,40 @@ var ORCHESTRATE_CONTENT = [
       '</div>',
 
       // Agent config
+      // NOTE: .agent-check-box is now a sibling of <input>, inside <label for=>.
+      // This is required for the CSS ~ selector to work: input:checked ~ .agent-check-box
       '<div class="orch-card">',
         '<div class="orch-card-title">// Agent 配置</div>',
-        '<div class="agent-toggle">',
+
+        // Search
+        '<label class="agent-toggle" id="toggle-search" onclick="return true">',
           '<input type="checkbox" id="agent-search" checked>',
-          '<label class="agent-toggle-label" for="agent-search">',
-            '<div class="agent-check-box"></div>',
+          '<div class="agent-check-box"></div>',
+          '<div class="agent-meta">',
             '<div class="agent-dot search"></div>',
             '<span class="agent-name">Search Worker</span>',
-          '</label>',
-        '</div>',
-        '<div class="agent-toggle">',
+          '</div>',
+        '</label>',
+
+        // RAG
+        '<label class="agent-toggle" id="toggle-rag" onclick="return true">',
           '<input type="checkbox" id="agent-rag" checked>',
-          '<label class="agent-toggle-label" for="agent-rag">',
-            '<div class="agent-check-box"></div>',
+          '<div class="agent-check-box"></div>',
+          '<div class="agent-meta">',
             '<div class="agent-dot rag"></div>',
             '<span class="agent-name">RAG Worker</span>',
-          '</label>',
-        '</div>',
-        '<div class="agent-toggle">',
+          '</div>',
+        '</label>',
+
+        // Coder
+        '<label class="agent-toggle" id="toggle-coder" onclick="return true">',
           '<input type="checkbox" id="agent-coder" checked>',
-          '<label class="agent-toggle-label" for="agent-coder">',
-            '<div class="agent-check-box"></div>',
+          '<div class="agent-check-box"></div>',
+          '<div class="agent-meta">',
             '<div class="agent-dot coder"></div>',
             '<span class="agent-name">Coder</span>',
-          '</label>',
-        '</div>',
+          '</div>',
+        '</label>',
       '</div>',
 
       // Quality threshold
@@ -518,7 +389,7 @@ var ORCHESTRATE_CONTENT = [
 
     '</div>', // end left
 
-    // Right panel
+    // ── RIGHT PANEL ──────────────────────────────────────────────────
     '<div class="orch-right">',
 
       // Execution graph
@@ -563,31 +434,29 @@ var ORCHESTRATE_CONTENT = [
   '</div>'
 ].join('');
 
-// ── State ─────────────────────────────────────────────────────────
-var _orchestrator = null;
-var _evtSource = null;
-
+// ═══════════════════════════════════════════════════════════════════════════
+//  State
+// ═══════════════════════════════════════════════════════════════════════════
 var _workerState = {
   search: { status: 'pending', quality: 0 },
-  rag: { status: 'pending', quality: 0 },
-  coder: { status: 'pending', quality: 0 },
+  rag:    { status: 'pending', quality: 0 },
+  coder:  { status: 'pending', quality: 0 },
 };
 
-// ── Page lifecycle ───────────────────────────────────────────────
-function orchestrateOnShow(savedState) {
-  // restore state
-}
-
-function orchestrateOnSave() {
-  return null;
-}
+// ═══════════════════════════════════════════════════════════════════════════
+//  Page lifecycle
+// ═══════════════════════════════════════════════════════════════════════════
+function orchestrateOnShow(savedState) {}
+function orchestrateOnSave() { return null; }
 
 registerSPA('/orchestrate', ORCHESTRATE_CONTENT, orchestrateOnShow, orchestrateOnSave);
 injectStyles();
 initPage('/orchestrate');
 initSPA('/orchestrate');
 
-// ── Quality slider ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  Quality slider
+// ═══════════════════════════════════════════════════════════════════════════
 var qualSlider = document.getElementById('orch-quality');
 if (qualSlider) {
   qualSlider.addEventListener('input', function() {
@@ -596,140 +465,128 @@ if (qualSlider) {
   });
 }
 
-// ── Start orchestration ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  Start orchestration
+//  Uses POST + fetch + ReadableStream (not EventSource) for full control.
+// ═══════════════════════════════════════════════════════════════════════════
 function startOrchestration() {
   var reqEl = document.getElementById('orch-req');
   var req = reqEl ? reqEl.value.trim() : '';
   if (!req) { toast('请输入需求', 'error'); return; }
 
-  // build enabled agents list
+  // Build enabled agents list
   var enabled = [];
   if (document.getElementById('agent-search').checked) enabled.push('search');
-  if (document.getElementById('agent-rag').checked) enabled.push('rag');
+  if (document.getElementById('agent-rag').checked)    enabled.push('rag');
   if (document.getElementById('agent-coder').checked) enabled.push('coder');
   if (!enabled.length) { toast('请至少选择一个 Agent', 'error'); return; }
 
   var qualityThreshold = parseFloat(document.getElementById('orch-quality').value);
 
-  // disable button
+  // Disable button
   var btn = document.getElementById('orch-start-btn');
   if (btn) {
     btn.disabled = true;
     btn.classList.add('running');
-    btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> 执行中...';
+    btn.innerHTML = '<span class="spinner"></span> 执行中...';
   }
 
-  // reset state
+  // Reset state
   _workerState = {
     search: { status: 'pending', quality: 0 },
-    rag: { status: 'pending', quality: 0 },
-    coder: { status: 'pending', quality: 0 },
+    rag:    { status: 'pending', quality: 0 },
+    coder:  { status: 'pending', quality: 0 },
   };
   resetGraph();
   clearLogs();
   clearResult();
 
-  // SSE
-  var threadId = G.threadId || 'orchestrate';
-  var url = '/api/orchestrate';
-  _evtSource = new EventSource(url + '?requirement=' + encodeURIComponent(req) +
-    '&enabled_agents=' + encodeURIComponent(JSON.stringify(enabled)) +
-    '&quality_threshold=' + qualityThreshold +
-    '&thread_id=' + encodeURIComponent(threadId));
+  // POST to orchestrate endpoint, read SSE as ReadableStream
+  var body = JSON.stringify({
+    requirement: req,
+    enabled_agents: enabled,
+    quality_threshold: qualityThreshold,
+    thread_id: G.threadId || 'orchestrate',
+  });
 
-  // Note: GET SSE can't have body; we use query params
-  // Re-do with POST approach via fetch + ReadableStream for SSE over POST
-  // Since EventSource only supports GET, we encode params in URL
-  // The backend reads OrchestrateRequest from query params instead
-
-  _evtSource.onmessage = function(e) {
-    try {
-      var data = JSON.parse(e.data);
-      handleOrchEvent(data);
-    } catch(err) {
-      console.error('SSE parse error', err, e.data);
+  fetch('/api/orchestrate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body,
+  })
+  .then(function(resp) {
+    if (!resp.ok) {
+      throw new Error('HTTP ' + resp.status + ': ' + resp.statusText);
     }
-  };
+    return resp.body.getReader();
+  })
+  .then(function(reader) {
+    var decoder = new TextDecoder();
+    var buffer = '';
 
-  _evtSource.addEventListener('supervisor_plan', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'supervisor_plan', data: data });
-  });
+    // Read SSE stream chunk by chunk
+    function pump() {
+      reader.read().then(function(result) {
+        if (result.done) {
+          onOrchDone();
+          return;
+        }
+        buffer += decoder.decode(result.value, { stream: true });
+        var lines = buffer.split('\n');
+        // Keep the last potentially incomplete line in buffer
+        buffer = lines.pop() || '';
 
-  _evtSource.addEventListener('worker_start', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'worker_start', data: data });
-  });
-
-  _evtSource.addEventListener('worker_progress', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'worker_progress', data: data });
-  });
-
-  _evtSource.addEventListener('worker_done', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'worker_done', data: data });
-  });
-
-  _evtSource.addEventListener('worker_rejected', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'worker_rejected', data: data });
-  });
-
-  _evtSource.addEventListener('quality_score', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'quality_score', data: data });
-  });
-
-  _evtSource.addEventListener('self_healing', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'self_healing', data: data });
-  });
-
-  _evtSource.addEventListener('loop_warning', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'loop_warning', data: data });
-  });
-
-  _evtSource.addEventListener('human_intervention', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'human_intervention', data: data });
-  });
-
-  _evtSource.addEventListener('conflict_detected', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'conflict_detected', data: data });
-  });
-
-  _evtSource.addEventListener('final_result', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'final_result', data: data });
-  });
-
-  _evtSource.addEventListener('error', function(e) {
-    var data = JSON.parse(e.data);
-    handleOrchEvent({ type: 'error', data: data });
-  });
-
-  _evtSource.onerror = function(err) {
-    console.error('SSE error', err);
-    var btn = document.getElementById('orch-start-btn');
-    if (btn) {
-      btn.disabled = false;
-      btn.classList.remove('running');
-      btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 开始编排';
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+          // SSE format: "event: type" or "data: payload"
+          if (line.startsWith('event: ')) {
+            // store event type
+            window._lastSSEEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            var payload = line.slice(6);
+            // Fire two handlers: one keyed by event type, one generic 'message'
+            var eventType = window._lastSSEEvent || 'message';
+            window._lastSSEEvent = null;
+            handleSSEEvent(eventType, payload);
+          }
+        }
+        pump();
+      }).catch(function(err) {
+        console.error('Stream read error', err);
+        onOrchDone();
+      });
     }
-  };
+
+    pump();
+  })
+  .catch(function(err) {
+    console.error('Orchestration fetch error', err);
+    appendLog('system', '请求失败: ' + err.message);
+    onOrchDone();
+  });
 }
 
-// ── Event handler ────────────────────────────────────────────────
-function handleOrchEvent(data) {
-  var type = data.type;
-  var d = data.data || data;
+// ═══════════════════════════════════════════════════════════════════════════
+//  SSE event dispatcher
+//  Backend sends: "event: <type>\ndata: <json>\n\n"
+//  This function receives the raw payload string.
+// ═══════════════════════════════════════════════════════════════════════════
+function handleSSEEvent(eventType, rawPayload) {
+  var data;
+  try {
+    data = JSON.parse(rawPayload);
+  } catch (e) {
+    console.error('SSE parse error for event', eventType, e, rawPayload);
+    return;
+  }
 
-  switch (type) {
+  // Normalise: some events nest their data under a 'data' key, some don't.
+  // Flatten so every handler gets data = top-level dict.
+  var d = (data.data !== undefined) ? data.data : data;
+
+  switch (eventType) {
     case 'supervisor_plan':
-      onSupervisorPlan(d);
+      onSupervisorPlan(d, data);
       break;
     case 'worker_start':
       onWorkerStart(d);
@@ -767,53 +624,61 @@ function handleOrchEvent(data) {
     case 'done':
       onOrchDone();
       break;
+    // Fallback for unnamed 'message' events (plain "data:" with no event: line)
+    case 'message':
+      // This fires for every data-only event; we treat it as 'error' if no type field
+      if (data.type) {
+        // Some events arrive as {type, data: {...}}; recurse
+        handleSSEEvent(data.type, JSON.stringify(data.data !== undefined ? data.data : data));
+      }
+      break;
+    default:
+      console.warn('Unknown SSE event type:', eventType, data);
   }
 }
 
-// ── Plan ─────────────────────────────────────────────────────────
-function onSupervisorPlan(d) {
-  var tasks = d.data ? d.data.tasks : d.tasks;
-  var planId = d.data ? d.data.plan_id : d.plan_id;
+// ═══════════════════════════════════════════════════════════════════════════
+//  Supervisor plan
+// ═══════════════════════════════════════════════════════════════════════════
+function onSupervisorPlan(d, raw) {
+  // d = {plan_id, tasks: [...]} OR {data: {plan_id, tasks: [...]}}
+  // Normalise: if tasks is undefined, d might be the inner wrapper
+  if (!d.tasks && d.data && d.data.tasks) d = d.data;
 
-  setSupervisorSub('规划中');
+  setSupervisorSub('<span class="spinner"></span> 规划中');
+  hideLogEmpty();
   appendLog('supervisor', '正在拆解任务...');
 
-  // render plan tasks
-  var logEmpty = document.getElementById('log-empty');
-  if (logEmpty) logEmpty.style.display = 'none';
-
-  if (tasks && tasks.length) {
-    tasks.forEach(function(t) {
-      var agentShort = t.assigned_agent ? t.assigned_agent.replace('_worker', '') : '?';
-      var agentClass = agentShort === 'search' ? 'search' : agentShort === 'rag' ? 'rag' : agentShort === 'coder' ? 'coder' : 'system';
-      appendLog('supervisor', '计划任务: ' + t.description);
-      appendLog('system', '  → 分配给: ' + agentShort + ' (' + t.task_id + ')');
+  if (d.tasks && d.tasks.length) {
+    d.tasks.forEach(function(t) {
+      var short = (t.assigned_agent || '').replace('_worker', '') || '?';
+      appendLog('supervisor', '计划: ' + t.description);
+      appendLog('system', '  → ' + short + ' (' + t.task_id + ')');
     });
   }
 
-  // render worker nodes in graph
-  renderWorkerNodes(tasks || []);
-  setSupervisorSub('已规划 ' + (tasks ? tasks.length : 0) + ' 个任务');
+  renderWorkerNodes(d.tasks || []);
+  setSupervisorSub('已规划 ' + (d.tasks ? d.tasks.length : 0) + ' 个任务');
 }
 
-// ── Worker nodes ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  Worker nodes in the graph
+// ═══════════════════════════════════════════════════════════════════════════
 function renderWorkerNodes(tasks) {
   var graph = document.getElementById('orch-graph');
   if (!graph) return;
 
-  // keep supervisor node, remove worker nodes
-  var existing = graph.querySelectorAll('.node-worker');
-  existing.forEach(function(n) { n.remove(); });
-  var existingArrows = graph.querySelectorAll('.graph-arrow');
-  existingArrows.forEach(function(a) { a.remove(); });
+  // Remove old worker nodes and arrows
+  graph.querySelectorAll('.node-worker, .graph-arrow').forEach(function(n) { n.remove(); });
 
-  var agents = [
-    { key: 'search', label: 'Search', dotClass: 'search', shortLabel: '搜索' },
-    { key: 'rag', label: 'RAG', dotClass: 'rag', shortLabel: '记忆' },
-    { key: 'coder', label: 'Coder', dotClass: 'coder', shortLabel: '代码' },
+  // Map assigned_agent -> display key
+  var agentMap = [
+    { key: 'search', label: 'Search',  dotClass: 'search',  taskKey: 'search_worker' },
+    { key: 'rag',    label: 'RAG',     dotClass: 'rag',     taskKey: 'rag_worker'    },
+    { key: 'coder',  label: 'Coder',   dotClass: 'coder',   taskKey: 'coder'         },
   ];
 
-  agents.forEach(function(a) {
+  agentMap.forEach(function(a) {
     var arrow = document.createElement('div');
     arrow.className = 'graph-arrow';
     arrow.textContent = '→';
@@ -838,74 +703,60 @@ function updateWorkerNode(key, status, sub, quality) {
   var subEl = document.getElementById('sub-' + key);
   if (subEl) subEl.textContent = sub || status;
   var scoreEl = document.getElementById('score-' + key);
-  if (scoreEl && quality !== undefined) scoreEl.textContent = quality > 0 ? quality.toFixed(1) : '';
+  if (scoreEl) scoreEl.textContent = (quality !== undefined && quality > 0) ? quality.toFixed(1) : '';
 }
 
-// ── Worker events ────────────────────────────────────────────────
-function onWorkerStart(d) {
-  var agent = d.agent || '';
-  var key = agent.replace('_worker', '');
-  if (key === agent) key = agent === 'coder' ? 'coder' : agent;
-  var agentShort = key === 'search' ? 'search' : key === 'rag' ? 'rag' : key === 'coder' ? 'coder' : key;
-  var agentClass = key === 'search' ? 'search' : key === 'rag' ? 'rag' : 'coder';
+function normaliseAgentKey(agent) {
+  if (!agent) return 'system';
+  if (agent === 'search_worker' || agent === 'search') return 'search';
+  if (agent === 'rag_worker'    || agent === 'rag')    return 'rag';
+  if (agent === 'coder')                            return 'coder';
+  if (agent === 'self_healer')                     return 'self_healer';
+  return 'system';
+}
 
-  updateWorkerNode(agentShort, 'running', '执行中...');
-  appendLog(agentClass, '开始: ' + (d.task_description || ''));
+// ═══════════════════════════════════════════════════════════════════════════
+//  Worker events
+// ═══════════════════════════════════════════════════════════════════════════
+function onWorkerStart(d) {
+  var key = normaliseAgentKey(d.agent);
+  updateWorkerNode(key, 'running', '执行中...');
+  appendLog(key, '开始: ' + (d.task_description || d.description || ''));
 }
 
 function onWorkerProgress(d) {
-  var agent = d.agent || '';
-  var key = agent.replace('_worker', '');
-  if (key === agent) key = agent === 'coder' ? 'coder' : agent;
-  var agentClass = key === 'search' ? 'search' : key === 'rag' ? 'rag' : 'coder';
-  appendLog(agentClass, d.message || '进行中');
+  var key = normaliseAgentKey(d.agent);
+  appendLog(key, d.message || '进行中');
 }
 
 function onWorkerDone(d) {
-  var agent = d.agent || '';
-  var key = agent.replace('_worker', '');
-  if (key === agent) key = agent === 'coder' ? 'coder' : agent;
-  var agentClass = key === 'search' ? 'search' : key === 'rag' ? 'rag' : 'coder';
-  var score = d.quality_score || 0;
-  var quality = parseFloat(score);
-
-  _workerState[agentClass] = { status: 'done', quality: quality };
-  updateWorkerNode(agentClass, 'done', '完成', quality);
-  appendLog(agentClass, '完成 (质量: ' + quality.toFixed(1) + '/10)');
-
+  var key  = normaliseAgentKey(d.agent);
+  var score = parseFloat(d.quality_score || 0);
+  _workerState[key] = { status: 'done', quality: score };
+  updateWorkerNode(key, 'done', '完成', score);
+  appendLog(key, '完成 (质量: ' + score.toFixed(1) + '/10)');
   setSupervisorSub('收集中...');
 }
 
 function onWorkerRejected(d) {
-  var agent = d.agent || '';
-  var key = agent.replace('_worker', '');
-  if (key === agent) key = agent === 'coder' ? 'coder' : agent;
-  var agentClass = key === 'search' ? 'search' : key === 'rag' ? 'rag' : 'coder';
-
-  updateWorkerNode(agentClass, 'rejected', '驳回');
-  appendLog(agentClass, '驳回: ' + (d.reason || '未知原因'));
+  var key = normaliseAgentKey(d.agent);
+  updateWorkerNode(key, 'rejected', '驳回');
+  appendLog(key, '驳回: ' + (d.reason || '未知原因'));
 }
 
 function onSelfHealing(d) {
-  var agent = d.agent || 'self_healer';
-  var agentClass = agent === 'self_healer' ? 'self_healer' : agent.replace('_worker', '');
-  appendLog(agentClass, '自修复 (尝试 #' + (d.attempt || '?') + '): ' + (d.reason || ''));
+  var key = normaliseAgentKey(d.agent);
+  appendLog(key, '自修复 #' + (d.attempt || '?') + ': ' + (d.reason || ''));
 }
 
 function onQualityScore(d) {
-  var score = d.score || 0;
-  var note = d.note || '';
-  appendLog('system', '整体质量评分: ' + score.toFixed(1) + '/10 ' + note);
+  appendLog('system', '整体质量: ' + parseFloat(d.score || 0).toFixed(1) + '/10 ' + (d.note || ''));
 }
 
 function onLoopWarning(d) {
-  var loop = d.loop_count || 0;
   var badge = document.getElementById('loop-badge');
-  if (badge) {
-    badge.style.display = 'inline-flex';
-    badge.textContent = '循环 ' + loop + '/15';
-  }
-  appendLog('system', '⚠️ 循环警告: 已循环 ' + loop + ' 次');
+  if (badge) { badge.style.display = 'inline-flex'; badge.textContent = '循环 ' + (d.loop_count || 0) + '/15'; }
+  appendLog('system', '⚠️ 循环警告: ' + (d.loop_count || 0) + ' 次');
 }
 
 function onHumanIntervention(d) {
@@ -923,40 +774,35 @@ function onOrchError(d) {
 }
 
 function onFinalResult(d) {
-  var score = d.quality_score || 0;
+  var score  = parseFloat(d.quality_score || 0);
   var passed = d.passed;
 
-  // update quality bar
-  var qRow = document.getElementById('result-quality-row');
-  var bar = document.getElementById('quality-bar');
-  var label = document.getElementById('quality-score-label');
-  var badge = document.getElementById('result-badge');
-
-  if (qRow) qRow.style.display = 'flex';
+  // Quality bar
+  var qRow   = document.getElementById('result-quality-row');
+  var bar    = document.getElementById('quality-bar');
+  var label  = document.getElementById('quality-score-label');
+  var badge  = document.getElementById('result-badge');
+  if (qRow)  qRow.style.display = 'flex';
   if (bar) {
     bar.style.width = (score * 10) + '%';
-    bar.className = score >= 8 ? 'quality-bar high' : 'quality-bar';
+    bar.className   = 'quality-bar' + (score >= 8 ? ' high' : '');
   }
   if (label) {
     label.textContent = score.toFixed(1);
-    label.className = score >= 8 ? 'quality-score-label high' : 'quality-score-label';
+    label.className   = 'quality-score-label' + (score >= 8 ? ' high' : '');
   }
   if (badge) {
-    badge.className = 'result-badge ' + (passed ? 'pass' : 'fail');
+    badge.className   = 'result-badge ' + (passed ? 'pass' : 'fail');
     badge.textContent = passed ? '✓ 通过' : '✗ 未达标';
   }
 
-  // render result
+  // Result content
+  hideResultEmpty();
   var body = document.getElementById('result-body');
-  var empty = document.getElementById('result-empty');
-  if (empty) empty.style.display = 'none';
-  if (body) {
-    var summary = d.summary || '';
-    body.innerHTML = '<div class="result-content">' + esc(summary) + '</div>';
-  }
+  if (body) body.innerHTML = '<div class="result-content">' + esc(d.summary || '') + '</div>';
 
   setSupervisorSub(passed ? '已完成 ✓' : '未达标 ✗');
-  appendLog('supervisor', '最终汇总完成 (质量: ' + score.toFixed(1) + '/10)');
+  appendLog('supervisor', '编排完成 (质量: ' + score.toFixed(1) + '/10)');
 }
 
 function onOrchDone() {
@@ -966,39 +812,45 @@ function onOrchDone() {
     btn.classList.remove('running');
     btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 重新编排';
   }
-  if (_evtSource) {
-    _evtSource.close();
-    _evtSource = null;
-  }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────
-function setSupervisorSub(text) {
+// ═══════════════════════════════════════════════════════════════════════════
+//  Helpers
+// ═══════════════════════════════════════════════════════════════════════════
+function setSupervisorSub(html) {
   var el = document.getElementById('supervisor-sub');
-  if (el) el.textContent = text;
+  if (el) el.innerHTML = html;
+}
+
+function hideLogEmpty() {
+  var el = document.getElementById('log-empty');
+  if (el) el.style.display = 'none';
+}
+
+function hideResultEmpty() {
+  var el = document.getElementById('result-empty');
+  if (el) el.style.display = 'none';
 }
 
 function resetGraph() {
   var graph = document.getElementById('orch-graph');
   if (!graph) return;
-  // remove worker nodes and arrows, keep supervisor
-  var workers = graph.querySelectorAll('.node-worker, .graph-arrow');
-  workers.forEach(function(n) { n.remove(); });
+  graph.querySelectorAll('.node-worker, .graph-arrow').forEach(function(n) { n.remove(); });
   setSupervisorSub('等待开始');
-  var loopBadge = document.getElementById('loop-badge');
-  if (loopBadge) loopBadge.style.display = 'none';
-  var conflictBadge = document.getElementById('conflict-badge');
-  if (conflictBadge) conflictBadge.style.display = 'none';
+  var lb = document.getElementById('loop-badge');
+  if (lb) lb.style.display = 'none';
+  var cb = document.getElementById('conflict-badge');
+  if (cb) cb.style.display = 'none';
 }
 
 function appendLog(agent, message) {
   var body = document.getElementById('log-body');
   if (!body) return;
-  var empty = document.getElementById('log-empty');
-  if (empty) empty.style.display = 'none';
+  hideLogEmpty();
 
-  var now = new Date();
-  var time = [now.getHours(), now.getMinutes(), now.getSeconds()].map(function(n) { return String(n).padStart(2, '0'); }).join(':');
+  var now  = new Date();
+  var time = [now.getHours(), now.getMinutes(), now.getSeconds()]
+    .map(function(n) { return String(n).padStart(2, '0'); }).join(':');
 
   var entry = document.createElement('div');
   entry.className = 'log-entry';
@@ -1007,43 +859,45 @@ function appendLog(agent, message) {
     '<span class="log-agent ' + agent + '">[' + agent + ']</span>' +
     '<span class="log-msg">' + esc(message) + '</span>';
   body.appendChild(entry);
-
-  // auto scroll
   body.scrollTop = body.scrollHeight;
 }
 
 function clearLogs() {
   var body = document.getElementById('log-body');
-  if (body) body.innerHTML = '';
-  var empty = document.getElementById('log-empty');
-  if (empty) { empty.style.display = ''; empty.innerHTML = '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>暂无日志'; }
+  if (body) {
+    body.innerHTML = '';
+    body.appendChild(Object.assign(document.createElement('div'), {
+      id: 'log-empty', className: 'orch-empty',
+      innerHTML: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>暂无日志',
+    }));
+  }
 }
 
 function clearResult() {
   var body = document.getElementById('result-body');
-  if (body) body.innerHTML = '';
-  var empty = document.getElementById('result-empty');
-  if (empty) { empty.style.display = ''; empty.innerHTML = '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>等待执行结果'; }
+  if (body) {
+    body.innerHTML = '';
+    body.appendChild(Object.assign(document.createElement('div'), {
+      id: 'result-empty', className: 'orch-empty',
+      innerHTML: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>等待执行结果',
+    }));
+  }
   var qRow = document.getElementById('result-quality-row');
   if (qRow) qRow.style.display = 'none';
 }
 
 function clearOrchestration() {
-  if (_evtSource) {
-    _evtSource.close();
-    _evtSource = null;
-  }
-  var req = document.getElementById('orch-req');
-  if (req) req.value = '';
-  resetGraph();
-  clearLogs();
-  clearResult();
   var btn = document.getElementById('orch-start-btn');
   if (btn) {
     btn.disabled = false;
     btn.classList.remove('running');
     btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 开始编排';
   }
+  var req = document.getElementById('orch-req');
+  if (req) req.value = '';
+  resetGraph();
+  clearLogs();
+  clearResult();
 }
 </script>
 </body>

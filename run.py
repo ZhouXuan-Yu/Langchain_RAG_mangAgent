@@ -72,29 +72,33 @@ def main():
             "src.server.main_server:app",
             "--host", "localhost",
             "--port", str(port),
-            "--reload",
         ],
         cwd=PROJECT_ROOT,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
 
     # 5. 等待服务就绪
-    # 注意：uvicorn --reload 时父进程不退出（监控文件变化），真正的 HTTP 服务在子进程
-    # 中运行。当子进程崩溃（如 import 错误），父进程保持 alive 但端口无监听。
-    # 因此用 /health HTTP 检查，而非只看 port 是否 open。
+    # 说明：uvicorn 主进程在 Windows 上启动子进程运行 HTTP 服务。
+    # 当子进程崩溃（如 import 错误），主进程保持 alive 但端口无监听。
+    # 因此用 /health HTTP 检查确认，而非只看端口是否 open。
     import urllib.request
     import urllib.error
 
     health_url = f"http://localhost:{port}/health"
     print(f"[INFO] 等待服务启动 (端口 {port})...")
+
     for i in range(60):
         time.sleep(0.5)
         if server.poll() is not None:
             print(f"[ERROR] 后端进程异常退出 (exit {server.returncode})，请查看上方 uvicorn 报错。")
             return
         try:
-            urllib.request.urlopen(health_url, timeout=1)
-            break
-        except (urllib.error.URLError, urllib.error.HTTPError):
+            # 用 /health 确认服务真正在响应，而非端口被旧进程占着
+            req = urllib.request.Request(health_url, headers={"User-Agent": "python"})
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                if resp.status == 200:
+                    break
+        except (urllib.error.URLError, urllib.error.HTTPError, Exception):
             pass
         if i % 10 == 0:  # 每 5 秒才打印一次，避免刷屏
             print(f"[INFO]  等待中... ({i+1}/60)")

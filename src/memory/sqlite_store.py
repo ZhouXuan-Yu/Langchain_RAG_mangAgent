@@ -1,5 +1,6 @@
 """SQLite checkpointer — 07: 对话状态持久化与断电恢复."""
 
+import asyncio
 import logging
 import sqlite3
 from typing import Any, Optional
@@ -48,7 +49,10 @@ async def get_async_sqlite_checkpointer(db_path: str | None = None) -> Any:
     from pathlib import Path
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-    conn = await aiosqlite.connect(path)
+    conn = await asyncio.wait_for(
+        aiosqlite.connect(path),
+        timeout=10.0,
+    )
     saver = AsyncSqliteSaver(conn)
 
     # 关键修复：显式调用 setup() 创建数据库表
