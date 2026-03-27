@@ -65,54 +65,60 @@ AVAILABLE_MODELS = [
 
 @router.post("/chat/stream")
 async def chat_stream(req: ChatRequest) -> StreamingResponse:
-    """SSE 流式对话 — 核心端点."""
+    """SSE 流式对话 — 后台执行图逻辑，完成后推送结果."""
 
     async def event_generator() -> AsyncGenerator[str, None]:
         model = req.model or get_current_model()
         agent = await get_agent(model)
         config = {"configurable": {"thread_id": req.thread_id}}
 
-        accumulated_content = ""
-
         try:
-            async for event in agent.astream_events(
-                {
-                    "messages": [HumanMessage(content=req.message)],
-                    "thread_id": req.thread_id,
-                },
+            # reason_node 是 async def，必须用 ainvoke
+            result = await agent.ainvoke(
+                {"messages": [HumanMessage(content=req.message)], "thread_id": req.thread_id},
                 config=config,
-                version="v2",
-            ):
-                event_type = event.get("event", "")
+            )
 
-                if event_type == "chat_model_stream":
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content") and chunk.content:
-                        accumulated_content += chunk.content
-                        yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
+            # 提取最终 AI 回复
+            messages = result.get("messages", []) if isinstance(result, dict) else []
+            final_text = ""
+            tool_calls = []
+            for msg in reversed(messages):
+                if hasattr(msg, "content") and hasattr(msg, "type"):
+                    if msg.type == "ai":
+                        final_text = msg.content or ""
+                        tool_calls = getattr(msg, "tool_calls", []) or []
+                        break
+                elif isinstance(msg, dict):
+                    if msg.get("type") == "ai" or msg.get("role") == "assistant":
+                        final_text = msg.get("content", "") or ""
+                        tool_calls = msg.get("tool_calls", []) or []
+                        break
 
-                elif event_type == "chat_model":
-                    # reason_node 使用 ainvoke()（非流式），产生完整 AIMessage，不带 chunk
-                    msg = event.get("data", {}).get("chunk")
-                    if msg:
-                        content = getattr(msg, "content", "") or ""
-                        if content and not accumulated_content:
-                            # 如果还没有任何 token 输出，说明是完全非流式输出
-                            accumulated_content = content
-                            yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
+            # 先推送工具调用事件（如果有）
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                tool_name = fn.get("name", "unknown")
+                tool_input = fn.get("arguments", "")
+                if isinstance(tool_input, str):
+                    try:
+                        tool_input = json.loads(tool_input)
+                    except Exception:
+                        tool_input = {"raw": tool_input}
+                yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input})}\n\n"
 
-                elif event_type == "tool":
-                    tool_name = event.get("name", "unknown")
-                    tool_input = event.get("data", {}).get("input", {})
-                    yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input})}\n\n"
+            # 推送 token（一次性全量，因为底层 LLM 是 non-streaming）
+            if final_text:
+                yield f"data: {json.dumps({'type': 'token', 'content': final_text})}\n\n"
 
-            logger.info(f"[chat_stream] astream_events exhausted. accumulated={len(accumulated_content)} chars")
-            yield f"data: {json.dumps({'type': 'done', 'content': accumulated_content})}\n\n"
+            # 推送完成信号
+            yield f"data: {json.dumps({'type': 'done', 'content': final_text})}\n\n"
 
+            # token 计数
             try:
                 _token_tracker.record(
                     prompt_tokens=0,
-                    completion_tokens=_token_tracker.count(accumulated_content),
+                    completion_tokens=_token_tracker.count(final_text),
                     model=model,
                     label="chat_stream",
                 )
@@ -129,7 +135,6 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
         },
     )
 
@@ -585,22 +590,34 @@ async def upload_document(
 
         store = get_document_store()
         doc = store.save(filename=filename, doc_type=doc_type, size_bytes=size, content=content)
+        doc_id = doc["id"]
+        chunks: list[str] = []
 
-        # 后台处理文本提取和 ChromaDB 注入
         try:
             text = extract_text(content, doc_type)
-            chunks = chunk_text(text)
-            store.add_chunks(doc["id"], chunks)
-            count = store.ingest_to_chroma(doc["id"])
-            doc = store.get(doc["id"])
+            if not (text or "").strip():
+                store.update_status(
+                    doc_id,
+                    "failed",
+                    chunk_count=0,
+                    error="未能从文件中提取到文本（空文件、加密文档或缺少解析依赖）",
+                )
+            else:
+                chunks = chunk_text(text)
+                store.add_chunks(doc_id, chunks)
+                store.ingest_to_chroma(doc_id)
+            doc = store.get(doc_id)
         except Exception as e:
             logger.error(f"[upload] processing error: {e}")
-            store.update_status(doc["id"], "failed", error=str(e))
-            doc = store.get(doc["id"])
+            store.update_status(doc_id, "failed", error=str(e))
+            doc = store.get(doc_id)
 
+        msg = f"已处理 {len(chunks)} 个文本块"
+        if doc and doc.get("status") == "failed":
+            msg = doc.get("error") or "处理失败"
         return DocumentUploadResponse(
             document=Document(**doc),
-            message=f"Uploaded and processed: {len(chunks) if 'chunks' in dir() else 0} chunks",
+            message=msg,
         )
     except Exception as e:
         logger.error(f"[upload] error: {e}")

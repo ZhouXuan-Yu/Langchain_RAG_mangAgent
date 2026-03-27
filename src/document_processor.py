@@ -398,6 +398,13 @@ class DocumentStore:
 
         chunks = self.get_chunks(doc_id)
         if not chunks:
+            # 否则 status 会永远停在 processing（extract 失败 / 空文本 / 未写入 chunk）
+            self.update_status(
+                doc_id,
+                "failed",
+                chunk_count=0,
+                error="未生成文本块：文件可能为空，或缺少依赖（如 Word 需 python-docx、PDF 需 pypdf）",
+            )
             return 0
 
         store = ChromaMemoryStore()

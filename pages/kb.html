@@ -19,6 +19,7 @@
     .type-chip { padding: 4px 12px; border-radius: 12px; font-size: 11px; font-family: var(--font-mono); cursor: pointer; border: 1px solid var(--noir-border); color: var(--noir-dim); background: transparent; transition: all 150ms; }
     .type-chip:hover { border-color: var(--noir-border-hi); color: var(--noir-text); }
     .type-chip.active { background: rgba(139,0,0,0.15); border-color: rgba(139,0,0,0.4); color: #c0392b; }
+    .doc-card-err { font-size: 10px; color: #c0392b; line-height: 1.35; margin-top: 6px; opacity: 0.9; }
   </style>
 </head>
 <body class="noir-theme">
@@ -88,13 +89,18 @@ initPage('/kb');
 
 var _allDocs = [];
 var _currentType = '';
+var _kbPollTimer = null;
 
 function loadDocs() {
+  if (_kbPollTimer) { clearTimeout(_kbPollTimer); _kbPollTimer = null; }
   fetch('/api/documents').then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
     if (!d) return;
     _allDocs = d.documents || [];
     updateStats(d);
     filterDocs();
+    if (_allDocs.some(function(x) { return x.status === 'processing'; })) {
+      _kbPollTimer = setTimeout(loadDocs, 2500);
+    }
   }).catch(function() {});
 }
 
@@ -140,10 +146,14 @@ function renderDocs(docs) {
   var icons = {pdf: 'P', docx: 'W', txt: 'T', md: 'M', csv: 'C', png: 'I', jpg: 'I', code: '/'};
   var statusMap = {ready: '就绪', processing: '处理中', done: '已完成', failed: '失败', pending: '等待中'};
   grid.innerHTML = docs.map(function(doc) {
+    var errLine = (doc.status === 'failed' && doc.error)
+      ? '<div class="doc-card-err" title="' + esc(doc.error) + '">' + esc(doc.error.length > 120 ? doc.error.slice(0, 120) + '…' : doc.error) + '</div>'
+      : '';
     return '<div class="doc-card">' +
       '<div class="doc-card-icon">' + (icons[doc.doc_type] || '?') + '</div>' +
       '<div class="doc-card-name">' + esc(doc.filename) + '</div>' +
       '<span class="status-badge ' + doc.status + '">' + (statusMap[doc.status] || doc.status) + '</span>' +
+      errLine +
       '<div class="doc-card-meta">' +
         '<span>' + (doc.chunk_count || 0) + ' 块</span>' +
         '<span>' + ((doc.size_bytes || 0) / 1024).toFixed(1) + ' KB</span>' +

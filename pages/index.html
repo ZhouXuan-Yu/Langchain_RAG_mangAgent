@@ -234,6 +234,53 @@
 
     .kb-divider { width: 1px; height: 14px; background: var(--border); }
 
+    /* 可用工具目录（与知识库卡片风格统一） */
+    .tool-details { margin-bottom: 4px; }
+    .tool-details > summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text);
+      padding: 2px 0;
+    }
+    .tool-details > summary::-webkit-details-marker { display: none; }
+    .tool-intro {
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1.45;
+      margin: 8px 0 10px;
+    }
+    .tool-catalog { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+    .tool-card-static {
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--elevated);
+      border: 1px solid var(--border);
+    }
+    .tool-card-static .nm {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #a78bfa;
+      margin-bottom: 5px;
+      letter-spacing: 0.02em;
+    }
+    .tool-card-static .desc { font-size: 11px; color: var(--muted); line-height: 1.45; }
+    .tool-log-sep {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0 6px;
+      margin-top: 6px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--muted);
+    }
+
     @media (max-width: 1100px) {
       .chat-layout { grid-template-columns: 1fr 240px; }
       .side-panel-card:last-child { display: none; }
@@ -305,16 +352,36 @@
         </div>
       </div>
 
-      <!-- 中间：工具调用日志 -->
+      <!-- 中间：可用工具 + 本次调用记录 -->
       <div class="side-panel-card glass">
         <div class="panel-hdr">
-          <span class="panel-title">工具调用</span>
-          <span class="panel-count" id="tool-num">0</span>
+          <span class="panel-title">工具</span>
         </div>
-        <div class="panel-body" id="tool-log">
-          <div class="empty-state">
-            <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-            <p>工具调用记录<br>显示在这里</p>
+        <div class="panel-body">
+          <details class="tool-details" open>
+            <summary>
+              <span>可用工具</span>
+              <span class="panel-count">6</span>
+            </summary>
+            <p class="tool-intro">以下为 Agent 可自动调用的工具（由模型根据问题选择）。</p>
+            <div class="tool-catalog">
+              <div class="tool-card-static"><div class="nm">memory_search</div><div class="desc">从长期记忆（向量库）中检索与用户问题相关的历史事实、项目与偏好。</div></div>
+              <div class="tool-card-static"><div class="nm">save_memory</div><div class="desc">将重要事实写入长期记忆，便于后续对话引用；自动去重相似内容。</div></div>
+              <div class="tool-card-static"><div class="nm">web_search</div><div class="desc">联网搜索时效性信息（新闻、版本、文档等），适合「最新」「今年」类问题。</div></div>
+              <div class="tool-card-static"><div class="nm">browse_page</div><div class="desc">抓取指定网页正文，用于阅读链接详情或核对网页内容。</div></div>
+              <div class="tool-card-static"><div class="nm">calculator</div><div class="desc">计算数学表达式，支持加减乘除、括号与乘方。</div></div>
+              <div class="tool-card-static"><div class="nm">process_image</div><div class="desc">根据图片路径处理或描述图像内容（多模态场景）。</div></div>
+            </div>
+          </details>
+          <div class="tool-log-sep">
+            <span>本次调用</span>
+            <span class="panel-count" id="tool-num">0</span>
+          </div>
+          <div id="tool-log">
+            <div class="empty-state">
+              <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              <p>工具调用记录<br>显示在这里</p>
+            </div>
           </div>
         </div>
       </div>
@@ -338,25 +405,80 @@
 
 <script>
 injectStyles();
-initPage('/');
 
-/* ── 页面初始化 ─────────────────────────────────────────── */
-var sel = document.getElementById('chat-model-select');
-sel.value = G.model;
-sel.addEventListener('change', function(e) {
-  var m = e.target.value;
-  if (m === G.model) return;
-  fetch('/api/model/switch', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({model: m})
-  }).then(function(r) {
-    if (r.ok) { G.model = m; toast('模型已切换'); renderHeader('/'); }
-    else toast('切换失败', 'error');
-  }).catch(function() { toast('切换失败', 'error'); });
+function persistChatState() {
+  try {
+    if (!G.msgs || !G.msgs.length) {
+      sessionStorage.removeItem(RAG_CHAT_SNAPSHOT_KEY);
+      return;
+    }
+    sessionStorage.setItem(RAG_CHAT_SNAPSHOT_KEY, JSON.stringify({
+      threadId: G.threadId,
+      model: G.model,
+      msgs: G.msgs,
+      toolLog: G.toolLog || []
+    }));
+  } catch (e) {}
+}
+
+function restoreChatState() {
+  try {
+    var raw = sessionStorage.getItem(RAG_CHAT_SNAPSHOT_KEY);
+    if (!raw) return;
+    var snap = JSON.parse(raw);
+    if (snap.threadId !== G.threadId) return;
+    G.msgs = snap.msgs || [];
+    G.model = snap.model || G.model;
+    G.tools = [];
+
+    var box = document.getElementById('chat-msgs');
+    box.innerHTML = '';
+    if (!G.msgs.length) {
+      box.innerHTML = '<div class="empty-state" id="chat-empty"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>发送消息开始对话<br><span style="opacity:0.5;font-size:11px">Agent 会记住你的偏好和上下文</span></p></div>';
+      updateMsgCount();
+      return;
+    }
+    G.msgs.forEach(function(m) {
+      chatAddMsg(m.role, m.content, false);
+    });
+    var tlog = document.getElementById('tool-log');
+    tlog.innerHTML = '';
+    G.tools = [];
+    G.toolLog = [];
+    (snap.toolLog || []).forEach(function(t) {
+      chatAddTool(t.name, t.input);
+    });
+    updateMsgCount();
+  } catch (e) {}
+}
+
+setTheme(localStorage.getItem('rag_theme') || 'glass');
+loadConfig(function(c) {
+  renderHeader('/');
+  var sel = document.getElementById('chat-model-select');
+  if (sel) {
+    sel.addEventListener('change', function(e) {
+      var m = e.target.value;
+      if (m === G.model) return;
+      fetch('/api/model/switch', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({model: m})
+      }).then(function(r) {
+        if (r.ok) { G.model = m; toast('模型已切换'); renderHeader('/'); persistChatState(); }
+        else toast('切换失败', 'error');
+      }).catch(function() { toast('切换失败', 'error'); });
+    });
+  }
+  restoreChatState();
+  if (sel) sel.value = G.model;
+  loadChatMem();
 });
 
-loadChatMem();
+window.addEventListener('pagehide', persistChatState);
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden') persistChatState();
+});
 
 /* ── 发送消息 ──────────────────────────────────────────── */
 function chatSend() {
@@ -373,6 +495,7 @@ function chatSend() {
   document.getElementById('tool-log').innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><p>工具调用记录<br>显示在这里</p></div>';
   document.getElementById('tool-num').textContent = '0';
   G.tools = [];
+  G.toolLog = [];
 
   chatAddMsg('user', text);
   G.msgs.push({role: 'user', content: text});
@@ -398,6 +521,7 @@ function chatSend() {
           if (full) aiBub.innerHTML = md(full);
           G.busy = false; btn.disabled = false; updateToolbarStat('idle');
           updateMsgCount();
+          persistChatState();
           return;
         }
         buf += decoder.decode(result.value, {stream: true});
@@ -419,6 +543,7 @@ function chatSend() {
               G.msgs.push({role: 'assistant', content: full});
               loadChatMem();
               updateMsgCount();
+              persistChatState();
             } else if (d.type === 'error') {
               aiBub.innerHTML = '<p style="color:#f87171">错误: ' + esc(d.content) + '</p>';
             }
@@ -474,6 +599,8 @@ function chatAddMsg(role, content, loading) {
 }
 
 function chatAddTool(name, inp) {
+  if (!G.toolLog) G.toolLog = [];
+  G.toolLog.push({ name: name, input: inp });
   var log = document.getElementById('tool-log');
   var empty = log.querySelector('.empty-state');
   if (empty) empty.remove();
@@ -534,8 +661,11 @@ function chatClearAll() {
   box.innerHTML = '<div class="empty-state" id="chat-empty"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>发送消息开始对话<br><span style="opacity:0.5;font-size:11px">Agent 会记住你的偏好和上下文</span></p></div>';
   G.msgs = [];
   G.tools = [];
+  G.toolLog = [];
+  try { sessionStorage.removeItem(RAG_CHAT_SNAPSHOT_KEY); } catch (err) {}
   updateMsgCount();
   document.getElementById('tool-num').textContent = '0';
+  document.getElementById('tool-log').innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><p>工具调用记录<br>显示在这里</p></div>';
   fetch('/api/chat/reset', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
