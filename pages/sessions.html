@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>会话列表 - Langchain_RAG</title>
+  <script src="/lib/shared.js"></script>
+  <style>
+    body { background: var(--bg); }
+  </style>
+</head>
+<body class="glass-theme">
+
+<div id="app">
+  <header class="topbar" id="header"></header>
+  <div class="main-area">
+    <div class="sessions-list">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px;font-weight:500;color:var(--text)">会话列表</h2>
+        <button class="btn" onclick="chatResetSession()" style="background:var(--elevated);border-color:var(--border-h);color:var(--text);padding:8px 16px;border-radius:8px">+ 新建会话</button>
+      </div>
+
+      <!-- 搜索排序栏 -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+        <input type="text" class="search-input" id="session-search" placeholder="搜索会话标题或内容..." oninput="filterSessions()" style="flex:1;background:var(--elevated);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:9px 14px;font-size:13px;font-family:var(--font-sans);outline:none;transition:border-color 150ms">
+        <select class="form-select" id="session-sort" onchange="filterSessions()" style="width:140px;background:var(--elevated);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;font-family:var(--font-mono);padding:9px 12px;outline:none;cursor:pointer">
+          <option value="updated">按更新时间</option>
+          <option value="created">按创建时间</option>
+          <option value="msgs">按消息数</option>
+        </select>
+      </div>
+
+      <div id="sessions-container"><div class="empty-state"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>正在加载会话...</p></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+injectStyles();
+initPage('/sessions');
+
+var _allSessions = [];
+
+function loadSessions() {
+  fetch('/api/sessions').then(function(r) { return r.ok ? r.json() : null; }).then(function(sessions) {
+    if (!sessions) return;
+    _allSessions = sessions;
+    filterSessions();
+  }).catch(function() {});
+}
+
+function filterSessions() {
+  var keyword = document.getElementById('session-search').value.toLowerCase();
+  var sortBy = document.getElementById('session-sort').value;
+
+  var filtered = _allSessions.filter(function(s) {
+    var title = s.title || ('会话 ' + s.thread_id.slice(0, 8));
+    return !keyword || title.toLowerCase().indexOf(keyword) !== -1 || s.thread_id.toLowerCase().indexOf(keyword) !== -1;
+  });
+
+  filtered.sort(function(a, b) {
+    if (sortBy === 'created') {
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    } else if (sortBy === 'msgs') {
+      return (b.message_count || 0) - (a.message_count || 0);
+    } else {
+      return new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
+    }
+  });
+
+  renderSessions(filtered);
+}
+
+function renderSessions(sessions) {
+  var container = document.getElementById('sessions-container');
+  if (!sessions.length) {
+    container.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>暂无会话记录</p></div>';
+    return;
+  }
+  container.innerHTML = sessions.map(function(s) {
+    var ts = s.updated_at ? new Date(s.updated_at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}) : '--';
+    var title = s.title || ('会话 ' + s.thread_id.slice(0, 8));
+    return '<div class="session-card">' +
+      '<div class="session-card-info">' +
+        '<div class="session-card-title">' + esc(title) + '</div>' +
+        '<div class="session-card-meta">ID: ' + s.thread_id.slice(0, 12) + '... | ' + s.message_count + ' 条消息 | ' + ts + '</div>' +
+      '</div>' +
+      '<div class="session-card-actions">' +
+        '<button class="session-btn" onclick="chatJumpSession(\'' + esc(s.thread_id) + '\')" title="打开会话"><svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>' +
+        '<button class="session-btn" onclick="sessionExport(\'' + esc(s.thread_id) + '\')" title="导出"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>' +
+        '<button class="session-btn delete" onclick="chatDelSession(\'' + esc(s.thread_id) + '\')" title="删除"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function chatJumpSession(tid) {
+  G.threadId = tid;
+  localStorage.setItem('rag_tid', tid);
+  location.href = '/';
+}
+
+function sessionExport(tid) {
+  fetch('/api/session/' + tid).then(function(r) { return r.ok ? r.json() : null; }).then(function(data) {
+    if (!data || !data.messages) { toast('获取会话失败', 'error'); return; }
+    var lines = ['# 会话记录', '---', ''];
+    data.messages.forEach(function(m) {
+      var role = m.type === 'HumanMessage' ? '用户' : '助手';
+      lines.push('**' + role + ':** ' + m.content);
+      lines.push('');
+    });
+    var blob = new Blob(['\ufeff' + lines.join('\n')], {type: 'text/markdown;charset=utf-8'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '会话_' + tid.slice(0, 8) + '_' + new Date().toLocaleString('zh-CN').replace(/[\/:]/g, '-') + '.md';
+    a.click();
+    toast('导出成功');
+  }).catch(function() { toast('导出失败', 'error'); });
+}
+
+function chatDelSession(tid) {
+  if (!confirm('确定要删除这个会话吗？')) return;
+  fetch('/api/chat/reset', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({thread_id: tid})
+  }).then(function() {
+    toast('会话已删除');
+    loadSessions();
+  }).catch(function() { toast('删除失败', 'error'); });
+}
+
+function chatResetSession() {
+  G.threadId = 't_' + Math.random().toString(36).slice(2, 10);
+  localStorage.setItem('rag_tid', G.threadId);
+  toast('新会话已创建');
+  loadSessions();
+}
+
+loadSessions();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent 管理 - Langchain_RAG</title>
+  <script src="/lib/shared.js"></script>
+  <style>
+    body { background: var(--bg); }
+  </style>
+</head>
+<body class="noir-theme">
+
+<div id="app">
+  <header class="topbar" id="header"></header>
+  <div class="main-area">
+    <div class="noir-page">
+      <div class="noir-header">
+        <h1>Agent 组织架构</h1>
+        <p>// 多智能体层级与职能管理</p>
+      </div>
+
+      <!-- 统计 -->
+      <div class="stats-bar">
+        <div class="stat-chip done">
+          <span class="stat-num" id="stat-active">0</span>
+          <span class="stat-label">在线</span>
+        </div>
+        <div class="stat-chip pending">
+          <span class="stat-num" id="stat-inactive">0</span>
+          <span class="stat-label">离线</span>
+        </div>
+        <div class="stat-chip done">
+          <span class="stat-num" id="stat-total-tasks">0</span>
+          <span class="stat-label">总任务数</span>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+        <button class="btn btn-primary" onclick="agentsShowCreate()" style="background:rgba(139,0,0,0.15);border-color:rgba(139,0,0,0.4);color:#c0392b;padding:8px 16px;border-radius:8px">+ 新建 Agent</button>
+      </div>
+
+      <div class="agent-org" id="agent-org"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+injectStyles();
+initPage('/agents');
+
+function loadAgents() {
+  fetch('/api/agents').then(function(r) { return r.ok ? r.json() : null; }).then(function(agents) {
+    if (!agents) return;
+    document.getElementById('stat-active').textContent = agents.filter(function(a) { return a.is_active; }).length;
+    document.getElementById('stat-inactive').textContent = agents.filter(function(a) { return !a.is_active; }).length;
+    var totalTasks = agents.reduce(function(s, a) { return s + (a.tasks_completed || 0); }, 0);
+    document.getElementById('stat-total-tasks').textContent = totalTasks;
+
+    var grid = document.getElementById('agent-org');
+    if (!agents.length) {
+      grid.innerHTML = '<p style="font-family:\'Courier Prime\',monospace;font-size:12px;color:#555;grid-column:1/-1;text-align:center;padding:40px 0">暂无 Agent，请先创建一个</p>';
+      return;
+    }
+    grid.innerHTML = agents.map(function(a) {
+      var modelShort = a.model ? a.model.split('-').pop() : 'chat';
+      return '<div class="agent-card">' +
+        '<div class="agent-card-color-bar" style="background:' + esc(a.color || '#555') + '"></div>' +
+        '<div class="agent-card-name">' + esc(a.name) + '</div>' +
+        '<div class="agent-card-role"><span class="agent-status-dot ' + (a.is_active ? 'active' : 'inactive') + '"></span>' + esc(a.role) + '</div>' +
+        '<div class="agent-card-desc">' + esc(a.description || '暂无描述') + '</div>' +
+        '<div class="agent-card-stats">' +
+          '<div class="agent-stat"><div class="agent-stat-val">' + (a.tasks_completed || 0) + '</div><div class="agent-stat-label">已完成</div></div>' +
+          '<div class="agent-stat"><div class="agent-stat-val" style="font-size:11px;color:var(--noir-dim)">' + esc(modelShort) + '</div><div class="agent-stat-label">模型</div></div>' +
+        '</div>' +
+        '<div class="agent-card-actions">' +
+          '<button class="btn" onclick="agentsDispatch(\'' + esc(a.id) + '\')" style="background:rgba(139,0,0,0.1);border-color:rgba(139,0,0,0.3);color:#c0392b">调度</button>' +
+          '<button class="btn" onclick="agentsToggleActive(\'' + esc(a.id) + '\', ' + !a.is_active + ')" style="background:var(--noir-surface);border-color:var(--noir-border-hi);color:var(--noir-dim)">' + (a.is_active ? '停用' : '启用') + '</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }).catch(function() {});
+}
+
+function agentsShowCreate() {
+  var colors = ['#8b0000', '#0066cc', '#228b22', '#cc6600', '#6a0dad', '#008b8b'];
+  var colorsHtml = colors.map(function(c, i) {
+    return '<label style="display:inline-block;margin-right:8px;cursor:pointer">' +
+      '<input type="radio" name="agent-color" value="' + c + '"' + (i === 0 ? ' checked' : '') + ' style="display:none">' +
+      '<span style="display:inline-block;width:20px;height:20px;border-radius:50%;background:' + c + ';border:2px solid transparent;margin-top:4px"></span>' +
+      '</label>';
+  }).join('');
+
+  var ov = document.createElement('div');
+  ov.className = 'modal-bg';
+  ov.innerHTML = [
+    '<div class="modal-box noir-card" style="background:var(--noir-card);border-color:var(--noir-border)">',
+    '  <h3 style="font-family:var(--font-serif);color:var(--noir-white)">新建 Agent</h3>',
+    '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">名称</label>',
+    '    <input class="form-input" id="agent-name" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text)" placeholder="Agent 名称..."></div>',
+    '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">角色</label>',
+    '    <input class="form-input" id="agent-role" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text)" placeholder="例如：研究员、编码员、分析师..."></div>',
+    '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">描述</label>',
+    '    <textarea class="form-input" id="agent-desc" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text);resize:none;min-height:60px"></textarea></div>',
+    '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">模型</label>',
+    '    <select class="form-select" id="agent-model" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text)">',
+    '      <option value="deepseek-chat">DeepSeek V3</option><option value="deepseek-reasoner">DeepSeek R1</option>',
+    '    </select></div>',
+    '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">颜色标识</label>',
+    '    <div style="margin-top:4px">' + colorsHtml + '</div></div>',
+    '  <div style="display:flex;gap:8px;margin-top:16px">',
+    '    <button class="btn" onclick="this.closest(\'.modal-bg\').remove()" style="flex:1;background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-dim)">取消</button>',
+    '    <button class="btn btn-primary" onclick="agentsCreate()" style="flex:1;background:rgba(139,0,0,0.15);border-color:rgba(139,0,0,0.4);color:#c0392b">创建</button>',
+    '  </div>',
+    '</div>'
+  ].join('');
+  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  document.getElementById('agent-name').focus();
+
+  // color picker toggle
+  document.querySelectorAll('input[name="agent-color"]').forEach(function(r) {
+    r.addEventListener('change', function() {
+      document.querySelectorAll('input[name="agent-color"] + span').forEach(function(s) { s.style.borderColor = 'transparent'; });
+      r.nextElementSibling.style.borderColor = '#fff';
+    });
+  });
+}
+
+function agentsCreate() {
+  var name = document.getElementById('agent-name').value.trim();
+  var role = document.getElementById('agent-role').value.trim();
+  var desc = document.getElementById('agent-desc').value.trim();
+  var model = document.getElementById('agent-model').value;
+  var colorRadio = document.querySelector('input[name="agent-color"]:checked');
+  var color = colorRadio ? colorRadio.value : '#8b0000';
+  if (!name || !role) { toast('名称和角色不能为空', 'error'); return; }
+  fetch('/api/agents', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name, role: role, description: desc, model: model, color: color})
+  }).then(function(r) {
+    if (r.ok) { toast('Agent 已创建'); document.querySelector('.modal-bg').remove(); loadAgents(); }
+    else toast('创建失败', 'error');
+  }).catch(function() { toast('创建失败', 'error'); });
+}
+
+function agentsToggleActive(id, activate) {
+  fetch('/api/agents/' + id, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({is_active: activate})
+  }).then(function(r) {
+    if (r.ok) { toast(activate ? '已启用' : '已停用'); loadAgents(); }
+    else toast('操作失败', 'error');
+  }).catch(function() { toast('操作失败', 'error'); });
+}
+
+function agentsDispatch(id) {
+  var msg = prompt('请输入要发送给此 Agent 的任务描述：');
+  if (!msg) return;
+  fetch('/api/agents/' + id + '/dispatch?message=' + encodeURIComponent(msg) + '&thread_id=' + encodeURIComponent(G.threadId), {
+    method: 'POST'
+  }).then(function(r) {
+    if (r.ok) toast('任务已发送');
+    else toast('调度失败', 'error');
+  }).catch(function() { toast('调度失败', 'error'); });
+}
+
+loadAgents();
+</script>
+
+</body>
+</html>

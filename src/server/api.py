@@ -91,11 +91,22 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         accumulated_content += chunk.content
                         yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
 
+                elif event_type == "chat_model":
+                    # reason_node 使用 ainvoke()（非流式），产生完整 AIMessage，不带 chunk
+                    msg = event.get("data", {}).get("chunk")
+                    if msg:
+                        content = getattr(msg, "content", "") or ""
+                        if content and not accumulated_content:
+                            # 如果还没有任何 token 输出，说明是完全非流式输出
+                            accumulated_content = content
+                            yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
+
                 elif event_type == "tool":
                     tool_name = event.get("name", "unknown")
                     tool_input = event.get("data", {}).get("input", {})
                     yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input})}\n\n"
 
+            logger.info(f"[chat_stream] astream_events exhausted. accumulated={len(accumulated_content)} chars")
             yield f"data: {json.dumps({'type': 'done', 'content': accumulated_content})}\n\n"
 
             try:

@@ -11,6 +11,9 @@ DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
 TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
 LANGSMITH_API_KEY: str = os.getenv("LANGSMITH_API_KEY", "")
 
+# ── HTTP Server ─────────────────────────────────────────────────────────────
+APP_PORT: int = int(os.getenv("APP_PORT", "8000"))
+
 # ── Model Config ──────────────────────────────────────────────────────────
 DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "deepseek-chat")
 TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.7"))

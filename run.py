@@ -7,8 +7,10 @@ import sys
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 def _open_browser(url: str) -> None:
@@ -51,18 +53,18 @@ def main():
     (data_dir / "chroma_db").mkdir(parents=True, exist_ok=True)
     (data_dir / "checkpointer").mkdir(parents=True, exist_ok=True)
 
-    # 3. 检查端口是否已被占用，尝试复用已有服务
-    port = 8501
+    # 3. 固定端口（与 main_server / .env 中 APP_PORT 一致）
+    # 注意：子进程若使用 stdout=PIPE 且主进程在等待循环中不读管道，uvicorn 日志会填满缓冲区，
+    # 在 Windows 上会导致子进程阻塞、端口永不监听 —— 因此必须继承标准输出或使用 DEVNULL。
+    port = int(os.getenv("APP_PORT", "8000"))
     if _is_port_open("localhost", port):
-        print(f"[INFO] 端口 {port} 已有服务运行，尝试复用...")
-        url = f"http://localhost:{port}"
-        print(f"[INFO] 正在打开浏览器: {url}")
-        _open_browser(url)
-        print("[INFO] 服务运行中，按 Ctrl+C 停止\n")
+        print(
+            f"[ERROR] 端口 {port} 已被占用（可能仍有旧 uvicorn/python 在运行）。"
+            f"请结束占用进程后重试，或在 .env 中修改 APP_PORT。"
+        )
         return
 
-    # 端口未被占用，直接启动服务
-    # 4. 启动后端（后台进程）
+    # 4. 启动后端（子进程日志直接打印到当前终端，避免 PIPE 死锁）
     print(f"[INFO] 正在启动后端服务 (FastAPI + LangGraph) 端口 {port} ...")
     server = subprocess.Popen(
         [
@@ -73,24 +75,31 @@ def main():
             "--reload",
         ],
         cwd=PROJECT_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
     )
 
     # 5. 等待服务就绪
+    # 注意：uvicorn --reload 时父进程不退出（监控文件变化），真正的 HTTP 服务在子进程
+    # 中运行。当子进程崩溃（如 import 错误），父进程保持 alive 但端口无监听。
+    # 因此用 /health HTTP 检查，而非只看 port 是否 open。
+    import urllib.request
+    import urllib.error
+
+    health_url = f"http://localhost:{port}/health"
     print(f"[INFO] 等待服务启动 (端口 {port})...")
-    for i in range(20):
-        time.sleep(1)
+    for i in range(60):
+        time.sleep(0.5)
         if server.poll() is not None:
-            output = server.stdout.read().decode(errors="replace")
-            print(f"[ERROR] 后端进程异常退出 (exit {server.returncode})")
-            print(output[-1000:])
+            print(f"[ERROR] 后端进程异常退出 (exit {server.returncode})，请查看上方 uvicorn 报错。")
             return
-        if _is_port_open("localhost", port):
+        try:
+            urllib.request.urlopen(health_url, timeout=1)
             break
-        print(f"[INFO]  等待中... ({i+1}/20)")
+        except (urllib.error.URLError, urllib.error.HTTPError):
+            pass
+        if i % 10 == 0:  # 每 5 秒才打印一次，避免刷屏
+            print(f"[INFO]  等待中... ({i+1}/60)")
     else:
-        print("[ERROR] 服务启动超时（20秒）")
+        print("[ERROR] 服务启动超时（约 30 秒），uvicorn 可能因 import 错误无法启动，请查看上方报错。")
         server.terminate()
         server.wait()
         return
@@ -100,12 +109,10 @@ def main():
     print(f"[INFO] 服务已就绪，正在打开浏览器: {url}")
     _open_browser(url)
 
-    # 7. 监控进程
+    # 7. 阻塞直到子进程结束（日志已由子进程继承的 stdout 输出）
     print("[INFO] 服务运行中，按 Ctrl+C 停止所有服务\n")
     try:
-        for line in server.stdout:
-            text = line.decode(errors="replace")
-            print(text, end="")
+        server.wait()
     except KeyboardInterrupt:
         print("\n[INFO] 正在关闭服务...")
         server.terminate()

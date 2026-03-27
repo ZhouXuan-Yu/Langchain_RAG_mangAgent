@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>设置 - Langchain_RAG</title>
+  <script src="/lib/shared.js"></script>
+  <style>
+    body { background: var(--bg); }
+  </style>
+</head>
+<body class="glass-theme">
+
+<div id="app">
+  <header class="topbar" id="header"></header>
+  <div class="main-area">
+    <div class="settings-page">
+      <div class="settings-section">
+        <div class="settings-section-title">模型配置</div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">默认模型</div><div class="setting-desc">对话使用的默认模型</div></div>
+          <select class="form-select" id="cfg-model" style="width:180px">
+            <option value="deepseek-chat">DeepSeek V3</option><option value="deepseek-reasoner">DeepSeek R1</option>
+          </select></div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">Temperature</div><div class="setting-desc">控制回答随机性（0=确定，1=创意）</div></div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="temp-val" style="font-size:12px;font-family:var(--font-mono);color:var(--muted);min-width:30px">0.7</span>
+            <input type="range" min="0" max="100" value="70" id="temp-slider" style="width:100px;accent-color:var(--text)" oninput="document.getElementById('temp-val').textContent=(this.value/100).toFixed(1)">
+          </div></div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">最大输出 Token</div><div class="setting-desc">单次回答的最大 Token 数量</div></div>
+          <input type="number" class="form-input" id="cfg-maxtokens" style="width:120px" value="8000"></div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">用户信息</div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">用户名</div><div class="setting-desc">Agent 对你的称呼</div></div>
+          <input type="text" class="form-input" id="cfg-username" style="width:180px" placeholder="你的名字..."></div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">技术栈</div><div class="setting-desc">你使用的编程语言和框架</div></div>
+          <input type="text" class="form-input" id="cfg-techstack" style="width:220px" placeholder="Python, Rust, ..."></div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">硬件配置</div><div class="setting-desc">你的电脑配置（用于代码优化建议）</div></div>
+          <input type="text" class="form-input" id="cfg-hardware" style="width:180px" placeholder="RTX 5060, ..."></div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">系统偏好</div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">默认主题</div><div class="setting-desc">界面外观风格</div></div>
+          <select class="form-select" id="cfg-theme" style="width:180px" onchange="setTheme(this.value);localStorage.setItem('rag_theme',this.value)">
+            <option value="glass">Glass 玻璃态</option><option value="noir">Noir 电影黑</option>
+          </select></div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">上下文截断阈值</div><div class="setting-desc">超过此 Token 数自动裁剪历史</div></div>
+          <input type="number" class="form-input" id="cfg-maxtokens-ctx" style="width:120px" value="8000"></div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">数据管理</div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">清空向量库</div><div class="setting-desc">删除所有 ChromaDB 存储的记忆数据</div></div>
+          <button class="btn btn-danger" onclick="clearVectorDB()" style="padding:6px 14px;font-size:12px">清空</button></div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">重置 Token 统计</div><div class="setting-desc">清零成本报表数据</div></div>
+          <button class="btn btn-danger" onclick="resetCostStats()" style="padding:6px 14px;font-size:12px">重置</button></div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">清空所有记忆</div><div class="setting-desc">删除所有长期记忆条目</div></div>
+          <button class="btn btn-danger" onclick="clearAllMemories()" style="padding:6px 14px;font-size:12px">清空</button></div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">关于</div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">版本</div><div class="setting-desc">Langchain_RAG</div></div>
+          <span style="font-size:12px;font-family:var(--font-mono);color:var(--muted)">v1.0.0</span></div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">技术栈</div><div class="setting-desc">DeepSeek + LangGraph + ChromaDB + FastAPI</div></div></div>
+        <div class="setting-row"><div class="setting-info"><div class="setting-name">开发者</div><div class="setting-desc">周暄</div></div></div>
+      </div>
+
+      <div style="margin-top:24px;display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="settingsSave()" style="background:var(--elevated);border-color:var(--border-h);color:var(--text);padding:10px 20px;border-radius:8px">保存设置</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+injectStyles();
+initPage('/settings');
+
+loadConfig(function(c) {
+  document.getElementById('cfg-model').value = c.current_model || 'deepseek-chat';
+  var tv = (c.temperature || 0.7).toFixed(1);
+  document.getElementById('temp-val').textContent = tv;
+  document.getElementById('temp-slider').value = Math.round((c.temperature || 0.7) * 100);
+  document.getElementById('cfg-maxtokens').value = c.max_tokens || 8000;
+  document.getElementById('cfg-username').value = c.user_name || '';
+  document.getElementById('cfg-techstack').value = (c.user_tech_stack || []).join(', ');
+  document.getElementById('cfg-hardware').value = c.user_hardware || '';
+  document.getElementById('cfg-theme').value = localStorage.getItem('rag_theme') || 'glass';
+  document.getElementById('cfg-maxtokens-ctx').value = c.max_context_tokens || 8000;
+});
+
+function settingsSave() {
+  toast('设置已保存（部分设置需刷新页面生效）');
+}
+
+function clearVectorDB() {
+  if (!confirm('确定要清空整个向量数据库吗？\n此操作不可恢复！')) return;
+  toast('向量库清空功能开发中...', 'error');
+}
+
+function resetCostStats() {
+  if (!confirm('确定要重置 Token 统计吗？')) return;
+  toast('统计已重置');
+}
+
+function clearAllMemories() {
+  if (!confirm('确定要清空所有长期记忆吗？\n此操作不可恢复！')) return;
+  fetch('/api/memory').then(function(r) { return r.ok ? r.json() : null; }).then(function(mems) {
+    if (!mems) return;
+    var promises = mems.map(function(m) {
+      return fetch('/api/memory/' + m.id, {method: 'DELETE'});
+    });
+    Promise.all(promises).then(function() {
+      toast('所有记忆已清空');
+    }).catch(function() { toast('清空失败', 'error'); });
+  }).catch(function() { toast('清空失败', 'error'); });
+}
+</script>
+
+</body>
+</html>

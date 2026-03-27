@@ -450,6 +450,8 @@ LANGSMITH_API_KEY=your-key-here
 
 ### Q6: 端口被占用 / 数据库锁定
 
+默认 Web 端口为 **8000**（可在 `.env` 中设置 `APP_PORT`）。若占用，请结束旧 `python`/`uvicorn` 进程或改端口。
+
 **解决**：
 ```bash
 # 删除锁文件

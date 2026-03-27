@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>任务 - Langchain_RAG</title>
+  <script src="/lib/shared.js"></script>
+  <style>
+    body { background: var(--bg); }
+    .search-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .search-input {
+      flex: 1;
+      background: var(--noir-surface);
+      border: 1px solid var(--noir-border);
+      border-radius: var(--radius-sm);
+      color: var(--noir-text);
+      padding: 8px 12px;
+      font-size: 13px;
+      font-family: var(--font-sans);
+      outline: none;
+      transition: border-color 150ms;
+    }
+    .search-input:focus { border-color: var(--noir-border-hi); }
+    .search-input::placeholder { color: var(--noir-muted); }
+    .filter-select {
+      background: var(--noir-surface);
+      border: 1px solid var(--noir-border);
+      border-radius: var(--radius-sm);
+      color: var(--noir-dim);
+      font-size: 12px;
+      font-family: var(--font-mono);
+      padding: 8px 12px;
+      cursor: pointer;
+      outline: none;
+    }
+    .filter-select option { background: #1a1a1a; }
+  </style>
+</head>
+<body class="noir-theme">
+
+<div id="app">
+  <header class="topbar" id="header"></header>
+  <div class="main-area">
+    <div class="noir-page">
+      <div class="noir-header">
+        <h1>任务协调</h1>
+        <p>// 多智能体任务调度中心</p>
+      </div>
+
+      <!-- 统计仪表板 -->
+      <div class="stats-bar">
+        <div class="stat-chip pending">
+          <span class="stat-num" id="stat-pending">0</span>
+          <span class="stat-label">待处理</span>
+        </div>
+        <div class="stat-chip running">
+          <span class="stat-num" id="stat-running">0</span>
+          <span class="stat-label">进行中</span>
+        </div>
+        <div class="stat-chip done">
+          <span class="stat-num" id="stat-done">0</span>
+          <span class="stat-label">已完成</span>
+        </div>
+        <div class="stat-chip failed">
+          <span class="stat-num" id="stat-failed">0</span>
+          <span class="stat-label">失败</span>
+        </div>
+      </div>
+
+      <!-- 搜索过滤栏 -->
+      <div class="search-bar">
+        <input type="text" class="search-input" id="task-search" placeholder="搜索任务标题..." oninput="filterTasks()">
+        <select class="filter-select" id="task-filter-agent" onchange="filterTasks()">
+          <option value="">所有 Agent</option>
+        </select>
+        <button class="btn btn-primary" onclick="tasksShowCreate()" style="background:rgba(139,0,0,0.15);border-color:rgba(139,0,0,0.4);color:#c0392b;padding:8px 16px;border-radius:8px">+ 新建任务</button>
+      </div>
+
+      <!-- Kanban -->
+      <div class="kanban" id="kanban">
+        <div class="kanban-col">
+          <div class="kanban-col-title">待处理<span class="kanban-col-count" id="col-count-pending">0</span></div>
+          <div id="col-pending"></div>
+        </div>
+        <div class="kanban-col">
+          <div class="kanban-col-title">进行中<span class="kanban-col-count" id="col-count-running">0</span></div>
+          <div id="col-running"></div>
+        </div>
+        <div class="kanban-col">
+          <div class="kanban-col-title">已完成<span class="kanban-col-count" id="col-count-done">0</span></div>
+          <div id="col-done"></div>
+        </div>
+        <div class="kanban-col">
+          <div class="kanban-col-title">失败<span class="kanban-col-count" id="col-count-failed">0</span></div>
+          <div id="col-failed"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+injectStyles();
+initPage('/tasks');
+
+var _tasksInterval = null;
+var _allTasks = [];
+
+function loadTasks() {
+  fetch('/api/tasks').then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
+    if (!d) return;
+    _allTasks = d.tasks || [];
+    updateStats(d);
+    renderKanban(_allTasks);
+    loadAgentsForFilter();
+  }).catch(function() {});
+}
+
+function updateStats(d) {
+  var counts = {pending: 0, running: 0, done: 0, failed: 0};
+  (_allTasks.length ? _allTasks : (d.tasks || [])).forEach(function(t) { if (counts[t.status] !== undefined) counts[t.status]++; });
+  document.getElementById('stat-pending').textContent = counts.pending;
+  document.getElementById('stat-running').textContent = counts.running;
+  document.getElementById('stat-done').textContent = counts.done;
+  document.getElementById('stat-failed').textContent = counts.failed;
+}
+
+function renderKanban(tasks) {
+  var cols = {pending: 'col-pending', running: 'col-running', done: 'col-done', failed: 'col-failed'};
+  var counts = {pending: 0, running: 0, done: 0, failed: 0};
+  Object.keys(cols).forEach(function(k) {
+    var el = document.getElementById(cols[k]);
+    if (!el) return;
+    var items = tasks.filter(function(t) { return t.status === k; });
+    counts[k] = items.length;
+    el.innerHTML = items.length ? items.map(taskCard).join('') : '<p style="font-family:\'Courier Prime\',monospace;font-size:11px;color:#555;text-align:center;padding:20px 0">暂无任务</p>';
+  });
+  Object.keys(counts).forEach(function(k) {
+    var el = document.getElementById('col-count-' + k);
+    if (el) el.textContent = counts[k];
+  });
+}
+
+function filterTasks() {
+  var keyword = document.getElementById('task-search').value.toLowerCase();
+  var agentId = document.getElementById('task-filter-agent').value;
+  var filtered = _allTasks.filter(function(t) {
+    var matchKeyword = !keyword || t.title.toLowerCase().indexOf(keyword) !== -1;
+    var matchAgent = !agentId || t.agent_id === agentId;
+    return matchKeyword && matchAgent;
+  });
+  renderKanban(filtered);
+}
+
+function taskCard(t) {
+  var ts = t.created_at ? new Date(t.created_at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}) : '--';
+  return '<div class="kanban-item" onclick="tasksShowDetail(\'' + esc(t.id) + '\')">' +
+    '<div class="kanban-item-title">' + esc(t.title) + '</div>' +
+    '<div class="kanban-item-meta"><span>' + ts + '</span><span class="status-badge ' + t.status + '">' + {
+      pending: '待处理', running: '进行中', done: '已完成', failed: '失败'
+    }[t.status] + '</span></div>' +
+    '<div class="kanban-item-actions">' +
+      (t.status === 'running' ? '<button class="kanban-action-btn" onclick="event.stopPropagation();tasksCancel(\'' + esc(t.id) + '\')" title="取消">\u00d7</button>' : '') +
+      '<button class="kanban-action-btn" onclick="event.stopPropagation();tasksDel(\'' + esc(t.id) + '\')" title="删除">\u2715</button>' +
+    '</div></div>';
+}
+
+function tasksShowCreate() {
+  var ov = document.createElement('div');
+  ov.className = 'modal-bg';
+  ov.innerHTML = [
+    '<div class="modal-box noir-card" style="background:var(--noir-card);border-color:var(--noir-border)">',
+    '  <h3 style="font-family:var(--font-serif);color:var(--noir-white)">新建任务</h3>',
+    '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">标题</label>',
+    '    <input class="form-input" id="task-create-title" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text)" placeholder="任务标题..."></div>',
+    '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">描述</label>',
+    '    <textarea class="form-input" id="task-create-desc" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text);resize:none;min-height:80px" placeholder="任务描述..."></textarea></div>',
+    '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">Agent（可选）</label>',
+    '    <select class="form-select" id="task-create-agent" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text)"><option value="">默认</option></select></div>',
+    '  <div style="display:flex;gap:8px;margin-top:16px">',
+    '    <button class="btn" onclick="this.closest(\'.modal-bg\').remove()" style="flex:1;background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-dim)">取消</button>',
+    '    <button class="btn btn-primary" onclick="tasksCreate()" style="flex:1;background:rgba(139,0,0,0.15);border-color:rgba(139,0,0,0.4);color:#c0392b">创建</button>',
+    '  </div>',
+    '</div>'
+  ].join('');
+  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  document.getElementById('task-create-title').focus();
+  loadAgentsForSelect();
+}
+
+function loadAgentsForFilter() {
+  fetch('/api/agents').then(function(r) { return r.ok ? r.json() : null; }).then(function(agents) {
+    if (!agents) return;
+    var sel = document.getElementById('task-filter-agent');
+    var current = sel.value;
+    sel.innerHTML = '<option value="">所有 Agent</option>' + agents.map(function(a) {
+      return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>';
+    }).join('');
+    sel.value = current;
+  }).catch(function() {});
+}
+
+function loadAgentsForSelect() {
+  fetch('/api/agents').then(function(r) { return r.ok ? r.json() : null; }).then(function(agents) {
+    if (!agents) return;
+    var sel = document.getElementById('task-create-agent');
+    sel.innerHTML = '<option value="">默认</option>' + agents.map(function(a) {
+      return '<option value="' + esc(a.id) + '">' + esc(a.name) + ' (' + esc(a.role) + ')</option>';
+    }).join('');
+  }).catch(function() {});
+}
+
+function tasksCreate() {
+  var title = document.getElementById('task-create-title').value.trim();
+  var desc = document.getElementById('task-create-desc').value.trim();
+  var agent_id = document.getElementById('task-create-agent').value || undefined;
+  if (!title) { toast('标题不能为空', 'error'); return; }
+  fetch('/api/tasks', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title: title, description: desc, agent_id: agent_id})
+  }).then(function(r) {
+    if (r.ok) { toast('任务已创建'); document.querySelector('.modal-bg').remove(); loadTasks(); }
+    else toast('创建失败', 'error');
+  }).catch(function() { toast('创建失败', 'error'); });
+}
+
+function tasksCancel(id) {
+  fetch('/api/tasks/' + id + '/cancel', {method: 'POST'}).then(function(r) {
+    if (r.ok) { toast('已取消'); loadTasks(); }
+    else toast('取消失败', 'error');
+  }).catch(function() { toast('取消失败', 'error'); });
+}
+
+function tasksDel(id) {
+  if (!confirm('确定要删除这个任务吗？')) return;
+  fetch('/api/tasks/' + id, {method: 'DELETE'}).then(function(r) {
+    if (r.ok) { toast('已删除'); loadTasks(); }
+    else toast('删除失败', 'error');
+  }).catch(function() { toast('删除失败', 'error'); });
+}
+
+function tasksShowDetail(id) {
+  var task = _allTasks.find(function(t) { return t.id === id; });
+  if (!task) return;
+  var ov = document.createElement('div');
+  ov.className = 'modal-bg';
+  ov.innerHTML = [
+    '<div class="modal-box noir-card" style="background:var(--noir-card);border-color:var(--noir-border);max-width:560px">',
+    '  <h3 style="font-family:var(--font-serif);color:var(--noir-white)">' + esc(task.title) + '</h3>',
+    '  <div style="margin-bottom:12px"><span class="status-badge ' + esc(task.status) + '">' + {
+      pending: '待处理', running: '进行中', done: '已完成', failed: '失败'
+    }[task.status] + '</span></div>',
+    '  <div style="font-size:13px;color:var(--noir-dim);line-height:1.6;margin-bottom:12px">' + esc(task.description || '无描述') + '</div>',
+    '  <div style="font-family:\'Courier Prime\',monospace;font-size:11px;color:var(--noir-muted);margin-bottom:16px">',
+    '    创建时间: ' + (task.created_at ? new Date(task.created_at).toLocaleString('zh-CN') : '--') + '<br>',
+    '    任务ID: ' + esc(task.id) + '<br>',
+    '    Agent: ' + esc(task.agent_id || '默认') + '',
+    '  </div>',
+    '  <div style="display:flex;gap:8px">',
+    '    <button class="btn" onclick="this.closest(\'.modal-bg\').remove()" style="flex:1;background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-dim)">关闭</button>',
+    '  </div>',
+    '</div>'
+  ].join('');
+  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+
+loadTasks();
+_tasksInterval = setInterval(loadTasks, 5000);
+</script>
+
+</body>
+</html>

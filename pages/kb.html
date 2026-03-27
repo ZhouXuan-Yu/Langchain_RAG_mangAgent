@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>知识库 - Langchain_RAG</title>
+  <script src="/lib/shared.js"></script>
+  <style>
+    body { background: var(--bg); }
+    .kb-stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+    .kb-stat-card { background: var(--noir-card); border: 1px solid var(--noir-border); border-radius: 8px; padding: 16px; text-align: center; }
+    .kb-stat-val { font-family: var(--font-serif); font-size: 24px; font-weight: 700; color: var(--noir-white); }
+    .kb-stat-label { font-family: 'Courier Prime', monospace; font-size: 10px; color: var(--noir-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+    .search-bar { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+    .search-input { flex: 1; background: var(--noir-surface); border: 1px solid var(--noir-border); border-radius: var(--radius-sm); color: var(--noir-text); padding: 8px 12px; font-size: 13px; font-family: var(--font-sans); outline: none; transition: border-color 150ms; }
+    .search-input:focus { border-color: var(--noir-border-hi); }
+    .search-input::placeholder { color: var(--noir-muted); }
+    .type-filter { display: flex; gap: 6px; }
+    .type-chip { padding: 4px 12px; border-radius: 12px; font-size: 11px; font-family: var(--font-mono); cursor: pointer; border: 1px solid var(--noir-border); color: var(--noir-dim); background: transparent; transition: all 150ms; }
+    .type-chip:hover { border-color: var(--noir-border-hi); color: var(--noir-text); }
+    .type-chip.active { background: rgba(139,0,0,0.15); border-color: rgba(139,0,0,0.4); color: #c0392b; }
+  </style>
+</head>
+<body class="noir-theme">
+
+<div id="app">
+  <header class="topbar" id="header"></header>
+  <div class="main-area">
+    <div class="noir-page">
+      <div class="noir-header">
+        <h1>知识库</h1>
+        <p>// 文档存储与向量检索中心</p>
+      </div>
+
+      <!-- 统计面板 -->
+      <div class="kb-stats-grid">
+        <div class="kb-stat-card">
+          <div class="kb-stat-val" id="kb-total-docs">0</div>
+          <div class="kb-stat-label">文档总数</div>
+        </div>
+        <div class="kb-stat-card">
+          <div class="kb-stat-val" id="kb-total-chunks">0</div>
+          <div class="kb-stat-label">文本块数</div>
+        </div>
+        <div class="kb-stat-card">
+          <div class="kb-stat-val" id="kb-total-size">0 KB</div>
+          <div class="kb-stat-label">总大小</div>
+        </div>
+        <div class="kb-stat-card">
+          <div class="kb-stat-val" id="kb-processed">0</div>
+          <div class="kb-stat-label">已处理</div>
+        </div>
+      </div>
+
+      <!-- 上传区 -->
+      <div class="upload-zone" id="upload-zone">
+        <div class="upload-zone-icon">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <p>拖拽文件到此处或 <strong>点击选择文件</strong><br><span style="font-size:10px;opacity:0.6">PDF, DOCX, TXT, Markdown, CSV, 图片, 代码文件</span></p>
+        <input type="file" id="file-input" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.py,.js,.ts,.java,.cpp,.go,.rs,.sh,.sql,.json,.yaml,.yml,.xml,.html,.css,.png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="kbHandleFiles(this.files)">
+      </div>
+
+      <!-- 搜索过滤 -->
+      <div class="search-bar">
+        <input type="text" class="search-input" id="doc-search" placeholder="搜索文件名..." oninput="filterDocs()">
+        <div class="type-filter" id="type-filter">
+          <button class="type-chip active" data-type="" onclick="setTypeFilter('')">全部</button>
+          <button class="type-chip" data-type="pdf" onclick="setTypeFilter('pdf')">PDF</button>
+          <button class="type-chip" data-type="docx" onclick="setTypeFilter('docx')">Word</button>
+          <button class="type-chip" data-type="txt" onclick="setTypeFilter('txt')">文本</button>
+          <button class="type-chip" data-type="code" onclick="setTypeFilter('code')">代码</button>
+        </div>
+      </div>
+
+      <!-- 文件列表 -->
+      <div id="doc-stats" style="margin-top:12px;font-family:'Courier Prime',monospace;font-size:11px;color:#555"></div>
+      <div class="doc-grid" id="doc-grid"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+injectStyles();
+initPage('/kb');
+
+var _allDocs = [];
+var _currentType = '';
+
+function loadDocs() {
+  fetch('/api/documents').then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
+    if (!d) return;
+    _allDocs = d.documents || [];
+    updateStats(d);
+    filterDocs();
+  }).catch(function() {});
+}
+
+function updateStats(d) {
+  var docs = d.documents || [];
+  var totalChunks = docs.reduce(function(s, doc) { return s + (doc.chunk_count || 0); }, 0);
+  var totalSize = docs.reduce(function(s, doc) { return s + (doc.size_bytes || 0); }, 0);
+  var processed = docs.filter(function(doc) { return doc.status === 'ready' || doc.status === 'done'; }).length;
+
+  document.getElementById('kb-total-docs').textContent = docs.length;
+  document.getElementById('kb-total-chunks').textContent = totalChunks;
+  document.getElementById('kb-total-size').textContent = (totalSize / 1024 / 1024).toFixed(2) + ' MB';
+  document.getElementById('kb-processed').textContent = processed;
+}
+
+function setTypeFilter(type) {
+  _currentType = type;
+  document.querySelectorAll('.type-chip').forEach(function(chip) {
+    chip.classList.toggle('active', chip.getAttribute('data-type') === type);
+  });
+  filterDocs();
+}
+
+function filterDocs() {
+  var keyword = document.getElementById('doc-search').value.toLowerCase();
+  var filtered = _allDocs.filter(function(doc) {
+    var matchKeyword = !keyword || doc.filename.toLowerCase().indexOf(keyword) !== -1;
+    var matchType = !_currentType || doc.doc_type === _currentType;
+    return matchKeyword && matchType;
+  });
+  renderDocs(filtered);
+}
+
+function renderDocs(docs) {
+  var grid = document.getElementById('doc-grid');
+  var stats = document.getElementById('doc-stats');
+  if (stats) stats.textContent = '// 共 ' + docs.length + ' 个文档';
+
+  if (!docs.length) {
+    grid.innerHTML = '<p style="font-family:\'Courier Prime\',monospace;font-size:12px;color:#555;grid-column:1/-1;text-align:center;padding:40px 0">暂无文档</p>';
+    return;
+  }
+  var icons = {pdf: 'P', docx: 'W', txt: 'T', md: 'M', csv: 'C', png: 'I', jpg: 'I', code: '/'};
+  var statusMap = {ready: '就绪', processing: '处理中', done: '已完成', failed: '失败', pending: '等待中'};
+  grid.innerHTML = docs.map(function(doc) {
+    return '<div class="doc-card">' +
+      '<div class="doc-card-icon">' + (icons[doc.doc_type] || '?') + '</div>' +
+      '<div class="doc-card-name">' + esc(doc.filename) + '</div>' +
+      '<span class="status-badge ' + doc.status + '">' + (statusMap[doc.status] || doc.status) + '</span>' +
+      '<div class="doc-card-meta">' +
+        '<span>' + (doc.chunk_count || 0) + ' 块</span>' +
+        '<span>' + ((doc.size_bytes || 0) / 1024).toFixed(1) + ' KB</span>' +
+      '</div>' +
+      '<div class="doc-card-actions"><button class="doc-action-btn" onclick="kbDelete(\'' + esc(doc.id) + '\')">删除</button></div>' +
+    '</div>';
+  }).join('');
+}
+
+var zone = document.getElementById('upload-zone');
+zone.addEventListener('click', function() { document.getElementById('file-input').click(); });
+zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('dragover'); });
+zone.addEventListener('dragleave', function() { zone.classList.remove('dragover'); });
+zone.addEventListener('drop', function(e) {
+  e.preventDefault(); zone.classList.remove('dragover');
+  kbHandleFiles(e.dataTransfer.files);
+});
+
+function kbHandleFiles(files) {
+  if (!files || !files.length) return;
+  var promises = [];
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    (function(file) {
+      var fd = new FormData();
+      fd.append('file', file);
+      promises.push(
+        fetch('/api/documents/upload', {method: 'POST', body: fd}).then(function(r) {
+          if (r.ok) toast('上传成功: ' + file.name);
+          else toast('上传失败: ' + file.name, 'error');
+        }).catch(function() { toast('上传错误', 'error'); })
+      );
+    })(f);
+  }
+  Promise.all(promises).then(function() { setTimeout(loadDocs, 1500); });
+}
+
+function kbDelete(id) {
+  if (!confirm('确定要删除这个文档吗？')) return;
+  fetch('/api/documents/' + id, {method: 'DELETE'}).then(function(r) {
+    if (r.ok) { toast('已删除'); loadDocs(); }
+    else toast('删除失败', 'error');
+  }).catch(function() { toast('删除失败', 'error'); });
+}
+
+loadDocs();
+</script>
+
+</body>
+</html>
