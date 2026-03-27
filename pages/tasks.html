@@ -166,10 +166,13 @@ function filterTasks() {
 
 function taskCard(t) {
   var ts = t.created_at ? new Date(t.created_at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}) : '--';
+  var orchBadge = t.task_kind === 'orchestrate'
+    ? '<span style="font-size:9px;background:rgba(139,0,0,0.25);border:1px solid rgba(139,0,0,0.5);color:#c0392b;border-radius:3px;padding:1px 5px;margin-left:4px">编排</span>'
+    : '';
   return '<div class="kanban-item" onclick="tasksShowDetail(\'' + esc(t.id) + '\')">' +
-    '<div class="kanban-item-title">' + esc(t.title) + '</div>' +
+    '<div class="kanban-item-title">' + esc(t.title) + orchBadge + '</div>' +
     '<div class="kanban-item-meta"><span>' + ts + '</span><span class="status-badge ' + t.status + '">' + {
-      pending: '待处理', running: '进行中', done: '已完成', failed: '失败'
+      pending: '待处理', running: '进行中', done: '已完成', failed: '失败', cancelled: '已取消'
     }[t.status] + '</span></div>' +
     '<div class="kanban-item-actions">' +
       (t.status === 'running' ? '<button class="kanban-action-btn" onclick="event.stopPropagation();tasksCancel(\'' + esc(t.id) + '\')" title="取消">\u00d7</button>' : '') +
@@ -262,21 +265,26 @@ function tasksDel(id) {
 function tasksShowDetail(id) {
   var task = _allTasks.find(function(t) { return t.id === id; });
   if (!task) return;
+  var isOrch = task.task_kind === 'orchestrate';
+  var orchBtn = isOrch && task.orchestrate_job_id
+    ? '<button class="btn" onclick="this.closest(\'.modal-bg\').remove();navigateTo(\'/orchestrate?job=' + esc(task.orchestrate_job_id) + '\')" style="flex:1;background:rgba(139,0,0,0.12);border-color:rgba(139,0,0,0.4);color:#c0392b">在编排台查看</button>'
+    : '';
   var ov = document.createElement('div');
   ov.className = 'modal-bg';
   ov.innerHTML = [
     '<div class="modal-box noir-card" style="background:var(--noir-card);border-color:var(--noir-border);max-width:560px">',
     '  <h3 style="font-family:var(--font-serif);color:var(--noir-white)">' + esc(task.title) + '</h3>',
     '  <div style="margin-bottom:12px"><span class="status-badge ' + esc(task.status) + '">' + {
-      pending: '待处理', running: '进行中', done: '已完成', failed: '失败'
-    }[task.status] + '</span></div>',
+      pending: '待处理', running: '进行中', done: '已完成', failed: '失败', cancelled: '已取消'
+    }[task.status] + '</span>' + (isOrch ? ' <span style="font-size:9px;background:rgba(139,0,0,0.25);border:1px solid rgba(139,0,0,0.5);color:#c0392b;border-radius:3px;padding:1px 5px">编排</span>' : '') + '</div>',
     '  <div style="font-size:13px;color:var(--noir-dim);line-height:1.6;margin-bottom:12px">' + esc(task.description || '无描述') + '</div>',
     '  <div style="font-family:\'Courier Prime\',monospace;font-size:11px;color:var(--noir-muted);margin-bottom:16px">',
     '    创建时间: ' + (task.created_at ? new Date(task.created_at).toLocaleString('zh-CN') : '--') + '<br>',
-    '    任务ID: ' + esc(task.id) + '<br>',
+    '    任务ID: ' + esc(task.id) + (isOrch && task.orchestrate_job_id ? '<br>编排Job: ' + esc(task.orchestrate_job_id) : '') + '<br>',
     '    Agent: ' + esc(task.agent_id || '默认') + '',
     '  </div>',
     '  <div style="display:flex;gap:8px">',
+    orchBtn,
     '    <button class="btn" onclick="this.closest(\'.modal-bg\').remove()" style="flex:1;background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-dim)">关闭</button>',
     '  </div>',
     '</div>'

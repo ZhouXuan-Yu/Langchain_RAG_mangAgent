@@ -35,6 +35,12 @@ UPSERT_SIMILARITY_THRESHOLD: float = 0.85
 MAX_CONTEXT_TOKENS: int = 8000   # trim_messages threshold
 WEB_CONTENT_MAX_CHARS: int = 3000  # summarizer max chars
 
+# ── PDF OCR（扫描件 / 纯图片 PDF；依次 EasyOCR → PaddleOCR）────────────────────
+PDF_OCR_ENABLED: bool = os.getenv("PDF_OCR_ENABLED", "true").lower() in ("1", "true", "yes")
+PDF_OCR_MAX_PAGES: int = int(os.getenv("PDF_OCR_MAX_PAGES", "40"))
+PDF_OCR_DPI: float = float(os.getenv("PDF_OCR_DPI", "150"))
+PDF_OCR_GPU: bool = os.getenv("PDF_OCR_GPU", "").lower() in ("1", "true", "yes")
+
 # ── User Profile (customizable) ────────────────────────────────────────────
 USER_NAME: str = "周暄"
 USER_TECH_STACK: list[str] = ["Python", "Rust", "FastAPI", "LangChain", "LangGraph"]

@@ -128,6 +128,7 @@ class AgentProfile(BaseModel):
     color: str = "#888888"
     is_active: bool = True
     tasks_completed: int = 0
+    worker_kind: Optional[str] = None  # search_worker | rag_worker | coder | NULL(通用)
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -148,6 +149,7 @@ class AgentUpdateRequest(BaseModel):
     model: Optional[str] = None
     color: Optional[str] = None
     is_active: Optional[bool] = None
+    worker_kind: Optional[str] = None  # 建议不要把通用 Agent 改成内置 kind
 
 
 class AgentTaskHistory(BaseModel):
@@ -176,6 +178,8 @@ class TaskJob(BaseModel):
     depends_on: list[str] = []
     result: Optional[str] = None
     error: Optional[str] = None
+    task_kind: Optional[str] = "agent_dispatch"  # agent_dispatch | orchestrate
+    orchestrate_job_id: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
@@ -236,10 +240,54 @@ class DocumentUploadResponse(BaseModel):
     message: str
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  知识库 RAG 检索
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class KbSearchRequest(BaseModel):
+    """POST /api/kb/search 的请求体."""
+    query: str = Field(..., description="检索查询文本")
+    top_k: int = Field(default=8, ge=1, le=20, description="返回的最相关块数")
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0, description="最低相似度阈值（0-1）")
+
+
+class KbSearchChunk(BaseModel):
+    """RAG 检索结果中的单个文本块."""
+    chunk_id: str
+    content: str
+    source_filename: str
+    doc_type: str
+    distance: float
+    similarity: float
+    score_percent: float = Field(description="0-100 的百分制相似度分数")
+    token_count: int
+
+
+class KbSearchResponse(BaseModel):
+    """POST /api/kb/search 的响应."""
+    query: str
+    chunks: list[KbSearchChunk]
+    total: int
+    elapsed_ms: int
+    search_params: dict
+
+
 class DocumentListResponse(BaseModel):
     """文档列表响应."""
     documents: list[Document]
     total: int
+
+
+class DocumentChunkItem(BaseModel):
+    """单个文本块（用于知识库预览）."""
+    index: int = Field(..., ge=0)
+    text: str
+
+
+class DocumentPreviewResponse(BaseModel):
+    """GET /api/documents/{id}/preview — 文档分块原文预览."""
+    document: Document
+    chunks: list[DocumentChunkItem] = Field(default_factory=list)
 
 
 # 解决 forward reference

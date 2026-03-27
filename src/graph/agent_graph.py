@@ -117,7 +117,7 @@ def build_agent_graph(
     builder.add_conditional_edges(
         "memory_reflect",
         should_continue,
-        {"router": "router", "__end__": END},
+        {"router": "router", "reason_node": "reason_node", "__end__": END},
     )
 
     # ── 编译 ──────────────────────────────────────────────────────────────

@@ -90,6 +90,7 @@ function loadAgents() {
         '</div>' +
         '<div class="agent-card-actions">' +
           '<button class="btn" onclick="agentsDispatch(\'' + esc(a.id) + '\')" style="background:rgba(139,0,0,0.1);border-color:rgba(139,0,0,0.3);color:#c0392b">调度</button>' +
+          '<button class="btn" onclick="agentsShowEdit(\'' + esc(a.id) + '\')" style="background:var(--noir-surface);border-color:var(--noir-border-hi);color:var(--noir-dim)">编辑</button>' +
           '<button class="btn" onclick="agentsToggleActive(\'' + esc(a.id) + '\', ' + !a.is_active + ')" style="background:var(--noir-surface);border-color:var(--noir-border-hi);color:var(--noir-dim)">' + (a.is_active ? '停用' : '启用') + '</button>' +
         '</div>' +
       '</div>';
@@ -177,6 +178,70 @@ function agentsDispatch(id) {
     if (r.ok) toast('任务已发送');
     else toast('调度失败', 'error');
   }).catch(function() { toast('调度失败', 'error'); });
+}
+
+function agentsShowEdit(id) {
+  fetch('/api/agents').then(function(r) { return r.ok ? r.json() : null; }).then(function(agents) {
+    if (!agents) return;
+    var a = agents.find(function(x) { return x.id === id; });
+    if (!a) { toast('未找到该 Agent', 'error'); return; }
+    var colors = ['#8b0000', '#0066cc', '#228b22', '#cc6600', '#6a0dad', '#008b8b'];
+    var colorsHtml = colors.map(function(c, i) {
+      return '<label style="display:inline-block;margin-right:8px;cursor:pointer">' +
+        '<input type="radio" name="edit-color" value="' + c + '"' + (a.color === c ? ' checked' : '') + ' style="display:none">' +
+        '<span style="display:inline-block;width:20px;height:20px;border-radius:50%;background:' + c + ';border:2px solid transparent;margin-top:4px"></span>' +
+        '</label>';
+    }).join('');
+
+    var ov = document.createElement('div');
+    ov.className = 'modal-bg';
+    ov.innerHTML = [
+      '<div class="modal-box noir-card" style="background:var(--noir-card);border-color:var(--noir-border)">',
+      '  <h3 style="font-family:var(--font-serif);color:var(--noir-white)">编辑 Agent</h3>',
+      '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">名称</label>',
+      '    <input class="form-input" id="edit-name" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text)" value="' + esc(a.name) + '"></div>',
+      '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">角色</label>',
+      '    <input class="form-input" id="edit-role" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text)" value="' + esc(a.role) + '"></div>',
+      '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">描述</label>',
+      '    <textarea class="form-input" id="edit-desc" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text);resize:none;min-height:60px">' + esc(a.description || '') + '</textarea></div>',
+      '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">模型</label>',
+      '    <select class="form-select" id="edit-model" style="background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-text)">',
+      '      <option value="deepseek-chat"' + (a.model === 'deepseek-chat' ? ' selected' : '') + '>DeepSeek V3</option>',
+      '      <option value="deepseek-reasoner"' + (a.model === 'deepseek-reasoner' ? ' selected' : '') + '>DeepSeek R1</option>',
+      '    </select></div>',
+      '  <div class="form-group"><label class="form-label" style="color:var(--noir-dim)">颜色标识</label>',
+      '    <div style="margin-top:4px">' + colorsHtml + '</div></div>',
+      '  <div style="display:flex;gap:8px;margin-top:16px">',
+      '    <button class="btn" onclick="this.closest(\'.modal-bg\').remove()" style="flex:1;background:var(--noir-surface);border-color:var(--noir-border);color:var(--noir-dim)">取消</button>',
+      '    <button class="btn btn-primary" onclick="agentsSaveEdit(\'' + esc(a.id) + '\')" style="flex:1;background:rgba(139,0,0,0.15);border-color:rgba(139,0,0,0.4);color:#c0392b">保存</button>',
+      '  </div>',
+      '</div>'
+    ].join('');
+    ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+    document.body.appendChild(ov);
+  }).catch(function() { toast('加载失败', 'error'); });
+}
+
+function agentsSaveEdit(id) {
+  var nameEl = document.getElementById('edit-name');
+  var roleEl = document.getElementById('edit-role');
+  var descEl = document.getElementById('edit-desc');
+  var modelEl = document.getElementById('edit-model');
+  var colorRadio = document.querySelector('input[name="edit-color"]:checked');
+  var name = nameEl ? nameEl.value.trim() : '';
+  var role = roleEl ? roleEl.value.trim() : '';
+  var desc = descEl ? descEl.value.trim() : '';
+  var model = modelEl ? modelEl.value : 'deepseek-chat';
+  var color = colorRadio ? colorRadio.value : '#8b0000';
+  if (!name || !role) { toast('名称和角色不能为空', 'error'); return; }
+  fetch('/api/agents/' + id, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name, role: role, description: desc, model: model, color: color})
+  }).then(function(r) {
+    if (r.ok) { toast('已保存'); var m = document.querySelector('.modal-bg'); if (m) m.remove(); loadAgents(); }
+    else toast('保存失败', 'error');
+  }).catch(function() { toast('保存失败', 'error'); });
 }
 </script>
 

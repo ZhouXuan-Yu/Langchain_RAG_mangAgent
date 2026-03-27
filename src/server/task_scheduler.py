@@ -60,6 +60,8 @@ def _init_db():
                 depends_on  TEXT DEFAULT '[]',
                 result      TEXT,
                 error       TEXT,
+                task_kind   TEXT DEFAULT 'agent_dispatch',
+                orchestrate_job_id TEXT,
                 created_at  TEXT,
                 updated_at  TEXT
             )
@@ -70,6 +72,12 @@ def _init_db():
         c.execute("""
             CREATE INDEX IF NOT EXISTS idx_tasks_priority ON task_jobs(priority DESC)
         """)
+        # 兼容升级：若表无新列则 ALTER TABLE
+        cols = [r[1] for r in c.execute("PRAGMA table_info(task_jobs)").fetchall()]
+        if "task_kind" not in cols:
+            c.execute("ALTER TABLE task_jobs ADD COLUMN task_kind TEXT DEFAULT 'agent_dispatch'")
+        if "orchestrate_job_id" not in cols:
+            c.execute("ALTER TABLE task_jobs ADD COLUMN orchestrate_job_id TEXT")
 
 
 _init_db()
@@ -96,18 +104,52 @@ class TaskScheduler:
         priority: int = 5,
         agent_id: Optional[str] = None,
         depends_on: Optional[list[str]] = None,
+        task_kind: str = "agent_dispatch",
+        orchestrate_job_id: Optional[str] = None,
     ) -> dict:
-        """同步创建任务（供 API 路由调用）."""
+        """同步创建任务（供 API 路由调用）。"""
         task_id = _uuid()
         now = datetime.now().isoformat()
         with _conn() as c:
             c.execute(
-                "INSERT INTO task_jobs (id,title,description,status,priority,agent_id,depends_on,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO task_jobs "
+                "(id,title,description,status,priority,agent_id,depends_on,task_kind,orchestrate_job_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (task_id, title, description, "pending", priority, agent_id,
-                 json.dumps(depends_on or []), now, now),
+                 json.dumps(depends_on or []), task_kind, orchestrate_job_id, now, now),
             )
         return self.get(task_id)
+
+    # ── 编排专用 ─────────────────────────────────────────────────────────────
+
+    def create_orchestrate_shell(
+        self,
+        requirement: str,
+        job_id: str,
+        enabled_agents: list[str],
+        participants: list[dict],
+        quality_threshold: float = 8.0,
+    ) -> dict:
+        """
+        创建编排任务看板行（pending，不自动执行）。
+        title 截取需求前 60 字符作为摘要。
+        """
+        title = requirement[:60] + ("…" if len(requirement) > 60 else "")
+        desc = json.dumps({
+            "requirement": requirement,
+            "enabled_agents": enabled_agents,
+            "participants": [{"id": p["id"], "name": p.get("name", p["id"])} for p in participants],
+            "quality_threshold": quality_threshold,
+        }, ensure_ascii=False)
+        return self.create(
+            title=title,
+            description=desc,
+            priority=8,
+            agent_id=None,
+            depends_on=[],
+            task_kind="orchestrate",
+            orchestrate_job_id=job_id,
+        )
 
     def get(self, task_id: str) -> Optional[dict]:
         """获取单个任务."""
@@ -121,6 +163,7 @@ class TaskScheduler:
         self,
         status: Optional[str] = None,
         agent_id: Optional[str] = None,
+        task_kind: Optional[str] = None,
         limit: int = 100,
     ) -> list[dict]:
         """列出任务（可过滤）."""
@@ -133,6 +176,9 @@ class TaskScheduler:
         if agent_id:
             where_clauses.append("agent_id=?")
             params.append(agent_id)
+        if task_kind:
+            where_clauses.append("task_kind=?")
+            params.append(task_kind)
         if where_clauses:
             sql += " WHERE " + " AND ".join(where_clauses)
         sql += " ORDER BY priority DESC, created_at DESC LIMIT ?"
@@ -153,6 +199,8 @@ class TaskScheduler:
         depends_on: Optional[list[str]] = None,
         result: Optional[str] = None,
         error: Optional[str] = None,
+        task_kind: Optional[str] = None,
+        orchestrate_job_id: Optional[str] = None,
     ) -> Optional[dict]:
         """更新任务字段."""
         task = self.get(task_id)
@@ -178,6 +226,10 @@ class TaskScheduler:
             updates.append("result=?"); params.append(result)
         if error is not None:
             updates.append("error=?"); params.append(error)
+        if task_kind is not None:
+            updates.append("task_kind=?"); params.append(task_kind)
+        if orchestrate_job_id is not None:
+            updates.append("orchestrate_job_id=?"); params.append(orchestrate_job_id)
 
         updates.append("updated_at=?"); params.append(datetime.now().isoformat())
         params.append(task_id)
@@ -189,8 +241,8 @@ class TaskScheduler:
     def delete(self, task_id: str) -> bool:
         """删除任务."""
         with _conn() as c:
-            c.execute("DELETE FROM task_jobs WHERE id=?", (task_id,))
-            return c.rowcount > 0
+            cur = c.execute("DELETE FROM task_jobs WHERE id=?", (task_id,))
+            return cur.rowcount > 0
 
     def counts(self) -> dict:
         """各状态任务数量."""
@@ -332,6 +384,8 @@ class TaskScheduler:
             "depends_on": json.loads(row["depends_on"] or "[]"),
             "result": row["result"],
             "error": row["error"],
+            "task_kind": row["task_kind"] if "task_kind" in row.keys() else "agent_dispatch",
+            "orchestrate_job_id": row["orchestrate_job_id"] if "orchestrate_job_id" in row.keys() else None,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

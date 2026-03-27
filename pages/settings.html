@@ -84,6 +84,7 @@ function settingsOnShow(savedState) {
     }, 10);
   }
   loadConfig(function(c) {
+    if (!c) return;
     var el = document.getElementById('cfg-model');
     if (el) el.value = c.current_model || 'deepseek-chat';
     var tv = (c.temperature || 0.7).toFixed(1);

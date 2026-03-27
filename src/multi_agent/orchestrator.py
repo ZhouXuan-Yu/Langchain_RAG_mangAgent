@@ -77,10 +77,15 @@ def _init_db():
                 is_active        INTEGER DEFAULT 1,
                 tasks_completed  INTEGER DEFAULT 0,
                 parent_id        TEXT,
+                worker_kind      TEXT,
                 created_at       TEXT
             )
         """)
-        # 如果没有默认 Agent，创建一个主控 Agent
+        # 兼容升级：若表中无 worker_kind 列则添加
+        cols = [r[1] for r in c.execute("PRAGMA table_info(agent_profiles)").fetchall()]
+        if "worker_kind" not in cols:
+            c.execute("ALTER TABLE agent_profiles ADD COLUMN worker_kind TEXT")
+
         row = c.execute("SELECT COUNT(*) as cnt FROM agent_profiles").fetchone()
         if row["cnt"] == 0:
             now = datetime.now().isoformat()
@@ -90,6 +95,52 @@ def _init_db():
                 ("agent_main", "Chief Coordinator", "chief",
                  "主控 Agent，负责协调所有子 Agent 的工作",
                  DEFAULT_MODEL, "#8b0000", 1, None, now),
+            )
+
+        # 幂等种子：三条内置 Worker（稳定 id，方便前端关联）
+        _seed_workers(c)
+
+
+def _seed_workers(c: sqlite3.Cursor) -> None:
+    """确保三条内置 Worker 档案存在（幂等）。"""
+    now = datetime.now().isoformat()
+    workers = [
+        (
+            "agent_worker_search",
+            "Search Worker",
+            "search_worker",
+            "外网实时信息搜索，使用 Tavily 搜索工具获取最新资料",
+            DEFAULT_MODEL,
+            "#4ade80",
+        ),
+        (
+            "agent_worker_rag",
+            "RAG Worker",
+            "rag_worker",
+            "本地知识库与记忆检索，从向量数据库中检索相关上下文",
+            DEFAULT_MODEL,
+            "#60a5fa",
+        ),
+        (
+            "agent_worker_coder",
+            "Coder Worker",
+            "coder",
+            "代码生成与编写，基于上下文生成高质量代码实现",
+            DEFAULT_MODEL,
+            "#facc15",
+        ),
+    ]
+    for (wk_id, wk_name, wk_kind, wk_desc, wk_model, wk_color) in workers:
+        existing = c.execute(
+            "SELECT id FROM agent_profiles WHERE id=?", (wk_id,)
+        ).fetchone()
+        if not existing:
+            c.execute(
+                "INSERT INTO agent_profiles "
+                "(id,name,role,description,model,color,is_active,parent_id,worker_kind,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (wk_id, wk_name, wk_kind, wk_desc, wk_model, wk_color,
+                 1, "agent_main", wk_kind, now),
             )
 
 
@@ -131,6 +182,17 @@ class AgentRegistry:
             return None
         return self._row_to_dict(row)
 
+    def get_by_worker_kind(self, worker_kind: str) -> Optional[dict]:
+        """根据 worker_kind 查找 Agent（用于编排路由）。"""
+        with _conn() as c:
+            row = c.execute(
+                "SELECT * FROM agent_profiles WHERE worker_kind=? LIMIT 1",
+                (worker_kind,),
+            ).fetchone()
+        if not row:
+            return None
+        return self._row_to_dict(row)
+
     def create(
         self,
         name: str,
@@ -167,6 +229,7 @@ class AgentRegistry:
         model: Optional[str] = None,
         color: Optional[str] = None,
         is_active: Optional[bool] = None,
+        worker_kind: Optional[str] = None,
     ) -> Optional[dict]:
         """更新 Agent 配置."""
         updates: list[str] = []
@@ -183,6 +246,8 @@ class AgentRegistry:
             updates.append("color=?"); params.append(color)
         if is_active is not None:
             updates.append("is_active=?"); params.append(1 if is_active else 0)
+        if worker_kind is not None:
+            updates.append("worker_kind=?"); params.append(worker_kind)
 
         if not updates:
             return self.get(agent_id)
@@ -334,6 +399,7 @@ class AgentRegistry:
             "is_active": bool(row["is_active"]),
             "tasks_completed": row["tasks_completed"],
             "parent_id": row["parent_id"],
+            "worker_kind": row["worker_kind"],
             "created_at": row["created_at"],
         }
 

@@ -473,6 +473,10 @@ var CHAT_CONTENT = [
         '</div>',
         '<div class="toolbar-right">',
           '<span class="toolbar-stat" id="msg-count-stat"><span id="msg-count">0</span> 条消息</span>',
+          '<button class="toolbar-btn" id="chat-stop-btn" onclick="chatStop()" title="中断生成" style="display:none">',
+            '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>',
+            '停止',
+          '</button>',
           '<button class="toolbar-btn" onclick="chatExport()" title="导出对话">',
             '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
             '导出',
@@ -585,7 +589,146 @@ function chatOnShow(savedState) {
     }
   }
 
+  // 自动调整输入框高度
+  var inp = document.getElementById('chat-text-input');
+  if (inp) {
+    inp.addEventListener('input', function() {
+      inp.style.height = 'auto';
+      inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
+    });
+  }
+
   loadChatMem();
+  // 从服务器加载历史消息（当前 thread_id 的所有对话记录）
+  // 如果 savedState 已有较多消息（>2，即正常导航恢复），跳过；否则强制从服务器拉取
+  var savedMsgCount = (savedState && savedState.msgs) ? savedState.msgs.length : 0;
+  if (savedMsgCount <= 2) {
+    loadChatHistory();
+  }
+}
+
+// ── 从服务器加载历史消息并渲染 ─────────────────────────────────
+function loadChatHistory() {
+  if (!G.threadId) {
+    // #region DBG-loadChatHistory-no-thread
+    fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1',location:'index.html:loadChatHistory',message:'H1-NO-THREAD: G.threadId is empty, skipping',data:{threadId:G.threadId},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
+    // #endregion
+    return;
+  }
+  // #region DBG-loadChatHistory-request
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1_req',location:'index.html:loadChatHistory',message:'H1-REQ: fetching session detail',data:{threadId:G.threadId},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
+  // #endregion
+  fetch('/api/session/' + encodeURIComponent(G.threadId) + '/detail').then(function(r) {
+    // #region DBG-loadChatHistory-status
+    fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1_resp',location:'index.html:loadChatHistory',message:'H1-RESP: HTTP status',data:{status:r.status,ok:r.ok},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
+    // #endregion
+    if (!r.ok) return null;
+    return r.json();
+  }).then(function(data) {
+    // #region DBG-loadChatHistory-data
+    fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1_data',location:'index.html:loadChatHistory',message:'H1-DATA: API response structure',data:{hasData:!!data,messagesLen:data?data.messages.length:0,toolEventsLen:data?data.tool_events.length:0,turnsLen:data?data.turns.length:0,firstTurnHasAssistant:data&&data.turns&&data.turns[0]?!!data.turns[0].assistant:false,firstTurnToolsLen:data&&data.turns&&data.turns[0]?data.turns[0].tools.length:0},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
+    // #endregion
+    if (!data || !data.turns || !data.turns.length) {
+      // #region DBG-loadChatHistory-empty
+      fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_H1_empty',location:'index.html:loadChatHistory',message:'H1-EMPTY: no turns in response',data:{threadId:G.threadId},timestamp:Date.now(),runId:'debug',hypothesisId:'H1'})}).catch(function(){});
+      // #endregion
+      return;
+    }
+    var box = document.getElementById('chat-msgs');
+    if (!box) return;
+
+    var empty = document.getElementById('chat-empty');
+    if (empty) empty.remove();
+
+    // 记录已有的消息数，避免重复追加
+    var baseCount = G.msgs.length;
+
+    data.turns.forEach(function(turn, tIdx) {
+      // 用户消息
+      G.msgs.push({role: 'user', content: turn.user || ''});
+      renderHistMsg(box, 'user', turn.user || '');
+
+      // AI 回复
+      if (turn.assistant) {
+        G.msgs.push({role: 'assistant', content: turn.assistant});
+        renderHistMsg(box, 'assistant', turn.assistant);
+      }
+
+      // 工具调用（渲染到右侧工具面板）
+      if (turn.tools && turn.tools.length) {
+        var histToolSeq = G.tools.length;
+        turn.tools.forEach(function(t) {
+          G.tools.push({id: 'hist-' + histToolSeq, name: t.name || t.tool_name || '?'});
+          histToolSeq++;
+        });
+        renderHistToolPanel(turn.tools, tIdx);
+      }
+    });
+
+    updateMsgCount();
+    var toolNumEl = document.getElementById('tool-num');
+    if (toolNumEl) toolNumEl.textContent = G.tools.length;
+    if (box) scrollBot(box);
+  }).catch(function() {});
+}
+
+function renderHistMsg(box, role, content) {
+  var row = document.createElement('div');
+  row.className = 'msg ' + role;
+  var av = document.createElement('div');
+  av.className = 'msg-av';
+  av.innerHTML = role === 'user'
+    ? '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
+    : '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>';
+  var bub = document.createElement('div');
+  bub.className = 'msg-bub';
+  bub.innerHTML = md(content);
+  row.appendChild(av);
+  row.appendChild(bub);
+  box.appendChild(row);
+}
+
+function renderHistToolPanel(tools, turnIdx) {
+  var container = document.querySelector('.tool-log-container');
+  if (!container) return;
+  // 清空空状态
+  var empty = container.querySelector('.empty-state');
+  if (empty) empty.remove();
+
+  var block = document.createElement('details');
+  block.className = 'task-block';
+  block.id = 'hist-task-' + turnIdx;
+  block.innerHTML =
+    '<summary class="task-header">' +
+      '<div class="task-header-left">' +
+        '<div class="task-header-icon"><svg width="14" height="14" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>' +
+        '<span class="task-header-title">历史调用</span>' +
+      '</div>' +
+      '<span class="task-header-badge">' + tools.length + ' 个工具</span>' +
+      '<span class="task-toggle">&#9660;</span>' +
+    '</summary>' +
+    '<div class="task-body" id="hist-task-' + turnIdx + '-body"></div>';
+  block.setAttribute('open', '');
+  container.insertBefore(block, container.firstChild);
+
+  var body = document.getElementById('hist-task-' + turnIdx + '-body');
+  if (!body) return;
+
+  tools.forEach(function(t, idx) {
+    var inputStr = typeof t.input === 'object' ? JSON.stringify(t.input, null, 2) : String(t.input || '');
+    var resultStr = typeof t.result === 'object' ? JSON.stringify(t.result, null, 2) : String(t.result || '');
+    var toolDiv = document.createElement('div');
+    toolDiv.className = 'tool-entry';
+    toolDiv.innerHTML =
+      '<div class="tool-entry-header">' +
+        '<span class="tool-entry-name">' + esc(t.name || t.tool_name || '?') + '</span>' +
+        '<span style="font-size:10px;font-family:var(--font-mono);color:var(--muted)">' +
+          (t.type === 'tool_start' ? '开始' : '结果') + '</span>' +
+      '</div>' +
+      (inputStr ? '<div class="tool-entry-data">' + esc(inputStr.slice(0, 300)) + '</div>' : '') +
+      (resultStr ? '<div class="tool-entry-result">' + esc(resultStr.slice(0, 300)) + '</div>' : '');
+    body.appendChild(toolDiv);
+  });
 }
 
 // ── 对话页：状态保存回调 ───────────────────────────────────────
@@ -685,11 +828,17 @@ function chatSend() {
               if (aiBub) aiBub.innerHTML = md(full) + '<div class="loading-dots" style="margin-top:6px"><span></span><span></span><span></span></div>';
               scrollBot(document.getElementById('chat-msgs'));
             } else if (d.type === 'tool') {
+              // #region DBG-SSE-tool
+              fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_SSE_tool',location:'index.html:chatSend',message:'SSE-TOOL: received tool event',data:{name:d.name,fullLen:full.length},timestamp:Date.now(),runId:'debug',hypothesisId:'H4'})}).catch(function(){});
+              // #endregion
               ensureTaskBlock();
               chatAddToolCard(d.name, d.input, d.result);
             } else if (d.type === 'tool_result') {
               updateToolCardResult(d.name, d.result);
             } else if (d.type === 'done') {
+              // #region DBG-SSE-done
+              fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4eeec4'},body:JSON.stringify({sessionId:'4eeec4',id:'log_'+(Date.now())+'_SSE_done',location:'index.html:chatSend',message:'SSE-DONE: stream completed',data:{fullLen:full.length,fullFirst50:full.slice(0,50),GtoolsLen:G.tools.length},timestamp:Date.now(),runId:'debug',hypothesisId:'H3'})}).catch(function(){});
+              // #endregion
               if (aiBub) aiBub.innerHTML = md(full);
               G.msgs.push({role: 'assistant', content: full});
               loadChatMem();

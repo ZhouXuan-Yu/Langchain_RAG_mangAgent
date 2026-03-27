@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 import uuid
 import zipfile
 import xml.etree.ElementTree as ET
@@ -15,11 +16,34 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, Optional
 
-from src.config import CHROMA_PATH
+from src.config import (
+    CHROMA_PATH,
+    PDF_OCR_DPI,
+    PDF_OCR_ENABLED,
+    PDF_OCR_GPU,
+    PDF_OCR_MAX_PAGES,
+)
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
+
+
+def _log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        import json as _j, time as _t
+        _path = Path(__file__).resolve().parent.parent / "debug-743147.log"
+        with _path.open("a", encoding="utf-8") as _f:
+            _f.write(_j.dumps({
+                "sessionId": "743147",
+                "hypothesisId": hypothesis_id,
+                "location": location,
+                "message": message,
+                "data": data,
+                "timestamp": int(_t.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 DATA_DIR = PROJECT_ROOT / "data"
 DOCS_DIR = DATA_DIR / "documents"
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
@@ -206,16 +230,9 @@ def extract_text(content: bytes, doc_type: str) -> str:
             return content.decode("utf-8", errors="replace")
     except Exception as e:
         logger.warning(f"[doc_processor] extract failed for type {doc_type}: {e}")
-        # region agent log
-        from src.utils.debug_ndjson import debug_ndjson
-
-        debug_ndjson(
-            "H3",
-            "document_processor.extract_text:except",
-            "extract_raised",
-            {"doc_type": doc_type, "exc_type": type(e).__name__, "exc_msg": str(e)[:300]},
-        )
-        # endregion
+        _log("H_EXTRACT", "document_processor.extract_text:except", "exception", {
+            "doc_type": doc_type, "exc_type": type(e).__name__, "exc_msg": str(e)[:300],
+        })
         return ""
 
 
@@ -243,12 +260,13 @@ def pdf_is_password_protected(content: bytes) -> bool:
 
 
 def pdf_upload_failure_hint(content: bytes) -> str:
-    """提取失败时给用户的补充说明."""
+    """提取失败时给用户的补充说明。"""
     if pdf_is_password_protected(content):
-        return "该 PDF 已加密或需要密码，请先解除限制或「打印为 PDF」导出后再上传。"
+        return "该 PDF 已加密或需要密码，请先解除限制或使用「打印为 PDF」导出后再上传。"
     return (
-        "未识别到可抽取的文字层：常见于扫描版（纯图片）PDF。"
-        "请使用 Word/WPS 打开后另存为带文字层的 PDF，或使用 OCR 工具识别后再上传。"
+        "未识别到可抽取文字层（常见于扫描版 PDF）。已依次尝试 EasyOCR / PaddleOCR；"
+        "若仍失败，请确认运行服务的 Python 环境中已安装 torch、easyocr、paddleocr（与 requirements.txt 一致），"
+        "或在 Word/WPS 中另存为带文字层的 PDF 后再上传。"
     )
 
 
@@ -257,20 +275,10 @@ def _extract_pdf(content: bytes) -> str:
     依次尝试 PyMuPDF → pypdf → pdfplumber，取最长结果。
     PyMuPDF 对中文、学术排版、嵌入字体 PDF 兼容性通常最好。
     """
-    # region agent log
-    from src.utils.debug_ndjson import debug_ndjson
-
-    debug_ndjson(
-        "H5",
-        "document_processor._extract_pdf:entry",
-        "pdf_magic",
-        {
-            "len": len(content),
-            "head_hex": (content[:16].hex() if content else ""),
-            "starts_with_pdf": content[:5] == b"%PDF-" if len(content) >= 5 else False,
-        },
-    )
-    # endregion
+    _log("H_PDF", "document_processor._extract_pdf:entry", "enter", {
+        "len": len(content),
+        "is_pdf_header": content[:5] == b"%PDF-" if len(content) >= 5 else False,
+    })
 
     methods: list[tuple[str, str]] = []
 
@@ -298,24 +306,8 @@ def _extract_pdf(content: bytes) -> str:
             doc.close()
     except ImportError as _e:
         logger.warning("[pdf] pymupdf (fitz) not installed — run: pip install pymupdf")
-        # region agent log
-        debug_ndjson(
-            "H1",
-            "document_processor._extract_pdf:pymupdf",
-            "import_failed",
-            {"exc": type(_e).__name__},
-        )
-        # endregion
     except Exception as e:
         logger.warning("[pdf] pymupdf error: %s", e, exc_info=True)
-        # region agent log
-        debug_ndjson(
-            "H1",
-            "document_processor._extract_pdf:pymupdf",
-            "open_or_read_failed",
-            {"exc_type": type(e).__name__, "exc_msg": str(e)[:200]},
-        )
-        # endregion
 
     # 2. pypdf
     try:
@@ -369,28 +361,236 @@ def _extract_pdf(content: bytes) -> str:
         logger.warning("[pdf] pdfplumber error: %s", e)
 
     if not methods:
-        logger.warning("[pdf] all extractors returned empty — likely image-only/scanned PDF or unsupported encoding")
-        # region agent log
-        debug_ndjson(
-            "H2",
-            "document_processor._extract_pdf:exit",
-            "no_text_all_extractors",
-            {"methods_tried": ["pymupdf", "pypdf", "pdfplumber"]},
-        )
-        # endregion
+        logger.warning("[pdf] all extractors returned empty — likely image-only/scanned PDF, trying OCR...")
+        ocr_text = _extract_pdf_via_ocr(content)
+        _ocr_s = (ocr_text or "").strip()
+        if _ocr_s:
+            logger.info("[pdf] OCR fallback succeeded, %s chars", len(ocr_text))
+            _log("H_PDF", "document_processor._extract_pdf:exit", "ocr_ok", {"chars": len(ocr_text)})
+            return ocr_text
+        logger.warning("[pdf] OCR fallback also produced empty text — giving up")
+        _log("H_PDF", "document_processor._extract_pdf:exit", "ocr_empty", {"methods_tried": ["pymupdf", "pypdf", "pdfplumber", "ocr"]})
         return ""
 
     best_lib, best_text = max(methods, key=lambda x: len(x[1]))
     logger.info("[pdf] using %s result (%s chars)", best_lib, len(best_text))
-    # region agent log
-    debug_ndjson(
-        "H2",
-        "document_processor._extract_pdf:exit",
-        "ok",
-        {"winner": best_lib, "chars": len(best_text), "all": [(n, len(t)) for n, t in methods]},
-    )
-    # endregion
+    _log("H_PDF", "document_processor._extract_pdf:exit", "text_ok", {
+        "winner": best_lib, "chars": len(best_text),
+        "all": [(n, len(t)) for n, t in methods],
+    })
     return best_text
+
+
+_easyocr_reader = None
+_easyocr_lock = threading.Lock()
+_paddle_ocr = None
+_paddle_lock = threading.Lock()
+
+
+def _get_easyocr_reader():
+    global _easyocr_reader
+    if _easyocr_reader is not None:
+        return _easyocr_reader
+    with _easyocr_lock:
+        if _easyocr_reader is not None:
+            return _easyocr_reader
+        import easyocr
+
+        try:
+            _easyocr_reader = easyocr.Reader(
+                ["ch_sim", "en"], gpu=PDF_OCR_GPU, verbose=False
+            )
+        except TypeError:
+            _easyocr_reader = easyocr.Reader(["ch_sim", "en"], gpu=PDF_OCR_GPU)
+        return _easyocr_reader
+
+
+def _get_paddle_ocr():
+    global _paddle_ocr
+    if _paddle_ocr is not None:
+        return _paddle_ocr
+    with _paddle_lock:
+        if _paddle_ocr is not None:
+            return _paddle_ocr
+        from paddleocr import PaddleOCR
+
+        last: Optional[Exception] = None
+        for kwargs in (
+            dict(use_angle_cls=True, lang="ch", use_gpu=PDF_OCR_GPU, show_log=False),
+            dict(lang="ch", use_gpu=PDF_OCR_GPU),
+            dict(lang="ch"),
+            dict(),
+        ):
+            try:
+                _paddle_ocr = PaddleOCR(**kwargs)
+                logger.info("[pdf][ocr] PaddleOCR 初始化成功，参数: %s", list(kwargs.keys()))
+                return _paddle_ocr
+            except Exception as e:
+                last = e
+                logger.debug("[pdf][ocr] PaddleOCR 尝试 %s 失败: %s", kwargs, e)
+        assert last is not None
+        raise last
+
+
+def _pdf_pages_as_png_for_ocr(content: bytes) -> Optional[list[bytes]]:
+    """將 PDF 每頁渲染為 PNG bytes；加密文檔返回 None。"""
+    try:
+        import fitz
+    except ImportError:
+        logger.warning("[pdf][ocr] PyMuPDF 未安裝，無法渲染頁面")
+        return None
+    doc = fitz.open(stream=content, filetype="pdf")
+    try:
+        if doc.needs_pass:
+            return None
+        scale = PDF_OCR_DPI / 72.0
+        mat = fitz.Matrix(scale, scale)
+        n = min(doc.page_count, PDF_OCR_MAX_PAGES)
+        return [doc.load_page(i).get_pixmap(matrix=mat, alpha=False).tobytes("png") for i in range(n)]
+    finally:
+        doc.close()
+
+
+def _paddle_v2_lines(result) -> list[str]:
+    lines: list[str] = []
+    for block in result or []:
+        for item in block or []:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                text_info = item[1]
+                if isinstance(text_info, (list, tuple)) and len(text_info) >= 1:
+                    txt = text_info[0]
+                else:
+                    txt = text_info
+                if isinstance(txt, str) and txt.strip():
+                    lines.append(txt.strip())
+    return lines
+
+
+def _paddle_lines_from_result(result) -> list[str]:
+    """兼容 PaddleOCR 2.x 嵌套列表与 3.x OCRResult（rec_texts）。"""
+    if result is None:
+        return []
+    if isinstance(result, dict):
+        texts = result.get("rec_texts") or result.get("texts") or []
+        if isinstance(texts, (list, tuple)):
+            return [str(t).strip() for t in texts if str(t).strip()]
+        return []
+    if hasattr(result, "rec_texts"):
+        texts = getattr(result, "rec_texts", None) or []
+        return [t.strip() for t in texts if isinstance(t, str) and t.strip()]
+    if isinstance(result, (list, tuple)) and result:
+        first = result[0]
+        if hasattr(first, "rec_texts"):
+            out: list[str] = []
+            for item in result:
+                texts = getattr(item, "rec_texts", None) or []
+                for t in texts:
+                    if isinstance(t, str) and t.strip():
+                        out.append(t.strip())
+            return out
+    return _paddle_v2_lines(result)
+
+
+def _paddle_run_one_page(ocr, img_bgr):
+    """调用 ocr.ocr / ocr.predict（不同版本参数不同）。"""
+    if hasattr(ocr, "ocr"):
+        try:
+            return ocr.ocr(img_bgr, cls=True)
+        except TypeError:
+            try:
+                return ocr.ocr(img_bgr)
+            except TypeError:
+                return ocr.ocr(img=img_bgr)
+    if hasattr(ocr, "predict"):
+        try:
+            return ocr.predict(img_bgr)
+        except TypeError:
+            return ocr.predict(input=img_bgr)
+    raise AttributeError("PaddleOCR instance has no ocr/predict")
+
+
+def _extract_pdf_via_ocr(content: bytes) -> str:
+    """
+    扫描版（纯图片）PDF：渲染页面后依次尝试 EasyOCR → PaddleOCR（2.x / 3.x）。
+    """
+    _log("H_OCR", "document_processor._extract_pdf_via_ocr:entry", "enter", {
+        "PDF_OCR_ENABLED": PDF_OCR_ENABLED,
+        "PDF_OCR_GPU": PDF_OCR_GPU,
+    })
+    if not PDF_OCR_ENABLED:
+        _log("H_OCR", "document_processor._extract_pdf_via_ocr:exit", "disabled", {})
+        return ""
+    pngs = _pdf_pages_as_png_for_ocr(content)
+    _log("H_OCR", "document_processor._extract_pdf_via_ocr:pngs", "after_render", {
+        "pngs_none": pngs is None, "pngs_count": len(pngs) if pngs else 0,
+    })
+    if pngs is None or not pngs:
+        _log("H_OCR", "document_processor._extract_pdf_via_ocr:exit", "no_pngs", {})
+        return ""
+
+    # ── EasyOCR（需 torch；首次会下载模型）
+    try:
+        import numpy as np
+        from PIL import Image
+
+        reader = _get_easyocr_reader()
+        page_texts: list[str] = []
+        for png in pngs:
+            img = Image.open(io.BytesIO(png)).convert("RGB")
+            arr = np.asarray(img)
+            chunk = reader.readtext(arr, detail=0, paragraph=False)
+            if isinstance(chunk, list):
+                lines = [s for s in chunk if isinstance(s, str) and s.strip()]
+            else:
+                lines = []
+            page_texts.append("\n".join(lines))
+        joined = "\n\n".join(page_texts)
+        if joined.strip():
+            logger.info("[pdf][ocr] EasyOCR 成功，约 %s 字符，%s 页", len(joined), len(pngs))
+            _log("H_OCR", "document_processor._extract_pdf_via_ocr:easyocr", "ok", {"chars": len(joined)})
+            return joined
+        _log("H_OCR", "document_processor._extract_pdf_via_ocr:easyocr", "empty", {})
+    except ImportError as _ie:
+        logger.debug("[pdf][ocr] 未安装 easyocr — pip install easyocr torch")
+        _log("H_OCR", "document_processor._extract_pdf_via_ocr:easyocr", "import_error", {"exc": type(_ie).__name__})
+    except Exception as e:
+        logger.warning("[pdf][ocr] EasyOCR 错误: %s", e)
+        _log("H_OCR", "document_processor._extract_pdf_via_ocr:easyocr", "exception", {"exc_type": type(e).__name__, "exc_msg": str(e)[:200]})
+
+    # ── PaddleOCR + OpenCV（解码 PNG 为 ndarray）
+    try:
+        import cv2
+        import numpy as np
+
+        ocr = _get_paddle_ocr()
+        page_texts = []
+        for png in pngs:
+            arr = np.frombuffer(png, dtype=np.uint8)
+            img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if img_bgr is None:
+                continue
+            try:
+                raw = _paddle_run_one_page(ocr, img_bgr)
+            except Exception as e:
+                logger.warning("[pdf][ocr] Paddle 单页识别失败: %s", e)
+                continue
+            lines = _paddle_lines_from_result(raw)
+            page_texts.append("\n".join(lines))
+        joined = "\n\n".join(page_texts)
+        if joined.strip():
+            logger.info("[pdf][ocr] PaddleOCR 成功，约 %s 字符", len(joined))
+            _log("H_OCR", "document_processor._extract_pdf_via_ocr:paddle", "ok", {"chars": len(joined)})
+            return joined
+        _log("H_OCR", "document_processor._extract_pdf_via_ocr:paddle", "empty", {})
+    except ImportError as _ie:
+        logger.debug("[pdf][ocr] 未安装 paddleocr / opencv")
+        _log("H_OCR", "document_processor._extract_pdf_via_ocr:paddle", "import_error", {"exc": type(_ie).__name__})
+    except Exception as e:
+        logger.warning("[pdf][ocr] PaddleOCR 错误: %s", e)
+        _log("H_OCR", "document_processor._extract_pdf_via_ocr:paddle", "exception", {"exc_type": type(e).__name__, "exc_msg": str(e)[:200]})
+
+    _log("H_OCR", "document_processor._extract_pdf_via_ocr:exit", "all_empty", {})
+    return ""
 
 
 _W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"

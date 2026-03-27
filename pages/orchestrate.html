@@ -3,59 +3,68 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>编排台 — Crayfish</title>
+  <title>编排台 - Crayfish</title>
   <script src="/lib/shared.js"></script>
   <style>
     body { background: var(--noir-bg); }
-    .orch-page-root {
-      position: relative;
-      height: 100%;
-      min-height: 0;
-      box-sizing: border-box;
-      display: flex;
-      flex-direction: column;
-    }
     .orchestrate-page {
       flex: 1;
       min-height: 0;
+      width: 100%;
       display: grid;
-      grid-template-columns: 380px 1fr;
-      gap: 16px;
-      padding: 20px 24px;
-      box-sizing: border-box;
-      overflow: hidden;
+      /* 中间「执行步骤」约为原 1fr:1fr 时中间列宽度的一半（与右侧 1:3） */
+      grid-template-columns: 300px minmax(0, 1fr) minmax(0, 3fr);
+      gap: 14px; padding: 16px 20px;
+      box-sizing: border-box; overflow: hidden;
+      align-content: stretch;
     }
-    /* ── 3-column layout ───────────────────────────────────────────── */
-    .orchestrate-page {
-      flex: 1;
-      min-height: 0;
-      display: grid;
-      /* 左 300px | 中 flex | 右 flex(撑满) */
-      grid-template-columns: 300px 1fr 1fr;
-      gap: 14px;
-      padding: 16px 20px;
-      box-sizing: border-box;
-      overflow: hidden;
-    }
-
-    /* ── Left column ─────────────────────────────────────────────── */
     .orch-left {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      overflow-y: auto;
-      min-height: 0;
-      padding-right: 2px;
+      display: flex; flex-direction: column; gap: 12px;
+      overflow-y: auto; min-height: 0; padding-right: 2px;
     }
     .orch-left::-webkit-scrollbar { width: 3px; }
     .orch-left::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
-    .orch-card { background: var(--noir-card); border: 1px solid var(--noir-border); border-radius: 10px; padding: 14px; }
-    .orch-card-title { font-family: 'Courier Prime', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--noir-dim); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--noir-border); }
-    .orch-req-input { width: 100%; background: var(--noir-surface); border: 1px solid var(--noir-border); border-radius: 8px; color: var(--noir-text); font-family: var(--font-sans); font-size: 13px; padding: 10px 12px; resize: none; min-height: 80px; outline: none; transition: border-color 150ms; box-sizing: border-box; }
+    .orch-mid {
+      display: flex; flex-direction: column; gap: 12px;
+      min-height: 0; overflow: hidden;
+    }
+    .orch-mid::-webkit-scrollbar { width: 4px; }
+    .orch-mid::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+    .orch-right {
+      display: flex; flex-direction: column; gap: 12px;
+      min-height: 0; overflow: hidden;
+    }
+    .orch-right::-webkit-scrollbar { width: 4px; }
+    .orch-right::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+    .orch-card {
+      background: var(--noir-card); border: 1px solid var(--noir-border);
+      border-radius: 10px; padding: 14px;
+    }
+    .orch-card-title {
+      font-family: 'Courier Prime', monospace; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--noir-dim); margin-bottom: 10px;
+      padding-bottom: 8px; border-bottom: 1px solid var(--noir-border);
+    }
+    .orch-req-input {
+      width: 100%; background: var(--noir-surface);
+      border: 1px solid var(--noir-border); border-radius: 8px;
+      color: var(--noir-text); font-family: var(--font-sans);
+      font-size: 13px; padding: 10px 12px; resize: none;
+      min-height: 80px; outline: none; transition: border-color 150ms;
+      box-sizing: border-box;
+    }
     .orch-req-input:focus { border-color: var(--noir-accent-hi); }
     .orch-req-input::placeholder { color: var(--noir-muted); }
     .orch-btn-row { display: flex; gap: 8px; margin-top: 8px; }
-    .orch-btn { flex: 1; padding: 9px 14px; border-radius: 8px; font-size: 13px; font-family: var(--font-sans); cursor: pointer; border: 1px solid var(--noir-border); background: var(--noir-surface); color: var(--noir-text); transition: all 150ms; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .orch-btn {
+      flex: 1; padding: 9px 14px; border-radius: 8px; font-size: 13px;
+      font-family: var(--font-sans); cursor: pointer;
+      border: 1px solid var(--noir-border);
+      background: var(--noir-surface); color: var(--noir-text);
+      transition: all 150ms; display: flex;
+      align-items: center; justify-content: center; gap: 6px;
+    }
     .orch-btn:hover { border-color: var(--noir-border-hi); background: var(--noir-card); }
     .orch-btn.primary { background: rgba(139,0,0,0.2); border-color: rgba(139,0,0,0.5); color: #c0392b; }
     .orch-btn.primary:hover { background: rgba(139,0,0,0.3); }
@@ -64,12 +73,25 @@
     @keyframes orchPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
     .orch-btn.cancel-btn { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.3); color: #f87171; }
     .orch-btn.cancel-btn:hover { background: rgba(248,113,113,0.2); }
-    .agent-toggle { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid rgba(42,42,42,0.6); cursor: pointer; }
+    .agent-toggle {
+      display: flex; align-items: center; gap: 8px; padding: 7px 0;
+      border-bottom: 1px solid rgba(42,42,42,0.6); cursor: pointer;
+    }
     .agent-toggle:last-child { border-bottom: none; }
     .agent-toggle input[type=checkbox] { display: none; }
-    .agent-check-box { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--noir-border-hi); background: var(--noir-surface); display: flex; align-items: center; justify-content: center; transition: all 150ms; flex-shrink: 0; }
+    .agent-check-box {
+      width: 18px; height: 18px; border-radius: 4px;
+      border: 1px solid var(--noir-border-hi);
+      background: var(--noir-surface); display: flex;
+      align-items: center; justify-content: center;
+      transition: all 150ms; flex-shrink: 0;
+    }
     .agent-toggle input:checked ~ .agent-check-box { background: rgba(139,0,0,0.3); border-color: var(--noir-accent-hi); }
-    .agent-toggle input:checked ~ .agent-check-box::after { content: ''; width: 6px; height: 10px; border: 2px solid #c0392b; border-top: none; border-left: none; transform: rotate(45deg) translate(-1px,-1px); display: block; }
+    .agent-toggle input:checked ~ .agent-check-box::after {
+      content: ''; width: 6px; height: 10px;
+      border: 2px solid #c0392b; border-top: none; border-left: none;
+      transform: rotate(45deg) translate(-1px,-1px); display: block;
+    }
     .agent-meta { display: flex; align-items: center; gap: 8px; }
     .agent-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
     .agent-dot.search { background: #4ade80; }
@@ -77,14 +99,26 @@
     .agent-dot.coder { background: #facc15; }
     .agent-name { font-family: 'Courier Prime', monospace; font-size: 12px; color: var(--noir-text); }
     .quality-row { display: flex; align-items: center; gap: 10px; }
-    .quality-slider { flex: 1; -webkit-appearance: none; height: 4px; border-radius: 2px; background: var(--noir-border); outline: none; }
-    .quality-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--noir-accent-hi); cursor: pointer; }
+    .quality-slider {
+      flex: 1; -webkit-appearance: none; height: 4px;
+      border-radius: 2px; background: var(--noir-border); outline: none;
+    }
+    .quality-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px;
+      border-radius: 50%; background: var(--noir-accent-hi); cursor: pointer;
+    }
     .quality-val { font-family: 'Courier Prime', monospace; font-size: 13px; color: #c0392b; min-width: 32px; text-align: right; }
-    /* ── Job history ───────────────────────────────────────────── */
-    .job-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; }
+    .job-list {
+      display: flex; flex-direction: column; gap: 6px;
+      flex: 1; min-height: 0; overflow-y: auto;
+    }
     .job-list::-webkit-scrollbar { width: 3px; }
-    .job-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-    .job-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--noir-border); background: var(--noir-surface); cursor: pointer; transition: all 150ms; }
+    .job-list::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+    .job-item {
+      display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+      border-radius: 8px; border: 1px solid var(--noir-border);
+      background: var(--noir-surface); cursor: pointer; transition: all 150ms;
+    }
     .job-item:hover { border-color: var(--noir-border-hi); }
     .job-item.selected { border-color: rgba(139,0,0,0.6); background: rgba(139,0,0,0.08); }
     .job-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -95,270 +129,216 @@
     .job-status-dot.cancelled { background: #888; }
     @keyframes pulseDot { 0%,100%{opacity:1} 50%{opacity:0.4} }
     .job-info { flex: 1; min-width: 0; }
-    .job-req-preview { font-family: 'Courier Prime', monospace; font-size: 11px; color: var(--noir-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .job-req-preview {
+      font-family: 'Courier Prime', monospace; font-size: 11px;
+      color: var(--noir-text); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
     .job-meta { font-family: 'Courier Prime', monospace; font-size: 10px; color: var(--noir-muted); margin-top: 2px; }
     .job-quality { font-family: 'Courier Prime', monospace; font-size: 11px; flex-shrink: 0; }
     .job-quality.high { color: #2ecc71; }
     .job-quality.fail { color: #f87171; }
     .job-empty { font-family: 'Courier Prime', monospace; font-size: 11px; color: var(--noir-muted); text-align: center; padding: 20px 0; }
-    /* ── Middle column: step timeline ──────────────────────────────── */
-    .orch-mid {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      min-height: 0;
-      overflow: hidden;
+    .progress-header {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px; background: var(--noir-card);
+      border: 1px solid var(--noir-border); border-radius: 10px;
     }
-    .orch-mid::-webkit-scrollbar { width: 4px; }
-    .orch-mid::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
-
-    /* ── Right column: logs 2/3 + eval+output 1/3 ────────────────── */
-    .orch-right {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      min-height: 0;
-      overflow: hidden;
-    }
-    .orch-right::-webkit-scrollbar { width: 4px; }
-    .orch-right::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
-
-    /* Log area: top 2/3 of right column */
-    .orch-logs {
-      flex: 2 1 0;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      overflow: hidden;
-      background: var(--noir-card);
-      border: 1px solid var(--noir-border);
-      border-radius: 10px;
-    }
-    .orch-logs .orch-card-title { padding: 10px 14px 8px; margin-bottom: 0; border-bottom: 1px solid var(--noir-border); }
-    .log-body {
-      flex: 1;
-      min-height: 0;
-      padding: 6px 4px;
-      overflow-y: auto;
-      overflow-x: hidden;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    /* Overall progress bar */
-    .progress-header { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--noir-card); border: 1px solid var(--noir-border); border-radius: 10px; }
     .progress-label { font-family: 'Courier Prime', monospace; font-size: 11px; color: var(--noir-dim); white-space: nowrap; }
     .progress-track { flex: 1; height: 6px; background: var(--noir-border); border-radius: 3px; overflow: hidden; }
-    .progress-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #c0392b, #e74c3c); transition: width 400ms ease; }
+    .progress-fill {
+      height: 100%; border-radius: 3px;
+      background: linear-gradient(90deg, #c0392b, #e74c3c);
+      transition: width 400ms ease;
+    }
     .progress-fill.high { background: linear-gradient(90deg, #27ae60, #2ecc71); }
     .progress-pct { font-family: 'Courier Prime', monospace; font-size: 12px; color: var(--noir-text); min-width: 36px; text-align: right; }
-    .step-badge { font-family: 'Courier Prime', monospace; font-size: 11px; color: #c0392b; background: rgba(139,0,0,0.12); border: 1px solid rgba(139,0,0,0.3); border-radius: 4px; padding: 2px 8px; white-space: nowrap; }
-
-    /* Step timeline */
-    .step-timeline { flex: 0 0 auto; background: var(--noir-card); border: 1px solid var(--noir-border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
-    .step-timeline-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--noir-border); cursor: pointer; flex-shrink: 0; }
+    .step-badge {
+      font-family: 'Courier Prime', monospace; font-size: 11px; color: #c0392b;
+      background: rgba(139,0,0,0.12); border: 1px solid rgba(139,0,0,0.3);
+      border-radius: 4px; padding: 2px 8px; white-space: nowrap;
+    }
+    .step-timeline {
+      flex: 1; min-height: 0; background: var(--noir-card);
+      border: 1px solid var(--noir-border); border-radius: 10px;
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .step-timeline-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-bottom: 1px solid var(--noir-border);
+      cursor: pointer; flex-shrink: 0;
+    }
     .step-timeline-header:hover { background: rgba(255,255,255,0.02); }
     .step-timeline-title { font-family: 'Courier Prime', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--noir-dim); }
     .step-timeline-toggle { font-size: 14px; color: var(--noir-dim); transition: transform 200ms; line-height: 1; }
     .step-timeline.collapsed .step-timeline-toggle { transform: rotate(-90deg); }
     .step-timeline.collapsed .step-list { display: none; }
-    .step-list { overflow: visible; padding: 4px 0; flex: 0 1 auto; }
+    .step-list { overflow-y: auto; flex: 1; padding: 6px 0; min-height: 0; }
     .step-list::-webkit-scrollbar { width: 3px; }
-    .step-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .step-list::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
     .step-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 14px; transition: background 150ms; }
     .step-item:hover { background: rgba(255,255,255,0.02); }
-    .step-icon { width: 20px; height: 20px; border-radius: 50%; border: 2px solid; flex-shrink: 0; margin-top: 2px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-family: 'Courier Prime', monospace; }
-    .step-icon.pending   { border-color: #444; background: transparent; color: #555; }
-    .step-icon.active    { border-color: #c0392b; background: rgba(139,0,0,0.2); color: #c0392b; animation: stepPulse 1s infinite; }
+    .step-icon {
+      width: 22px; height: 22px; border-radius: 50%; border: 2px solid;
+      flex-shrink: 0; margin-top: 1px; display: flex;
+      align-items: center; justify-content: center;
+      font-size: 10px; font-family: 'Courier Prime', monospace;
+    }
+    .step-icon.pending { border-color: #444; background: transparent; color: #555; }
+    .step-icon.active  { border-color: #c0392b; background: rgba(139,0,0,0.2); color: #c0392b; animation: stepPulse 1s infinite; }
     @keyframes stepPulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-    .step-icon.done      { border-color: #4ade80; background: rgba(74,222,128,0.15); color: #4ade80; }
-    .step-icon.fail      { border-color: #f87171; background: rgba(248,113,113,0.15); color: #f87171; }
+    .step-icon.done     { border-color: #4ade80; background: rgba(74,222,128,0.15); color: #4ade80; }
+    .step-icon.fail     { border-color: #f87171; background: rgba(248,113,113,0.15); color: #f87171; }
     .step-content { flex: 1; min-width: 0; }
-    .step-name { font-family: 'Courier Prime', monospace; font-size: 11px; color: var(--noir-text); }
+    .step-lane {
+      font-family: 'Courier Prime', monospace; font-size: 9px;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--noir-muted); margin-bottom: 3px; opacity: 0.85;
+    }
+    .step-name { font-family: 'Courier Prime', monospace; font-size: 12px; color: var(--noir-text); }
     .step-desc { font-family: 'Courier Prime', monospace; font-size: 10px; color: var(--noir-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .step-time { font-family: 'Courier Prime', monospace; font-size: 10px; color: var(--noir-muted); flex-shrink: 0; margin-top: 3px; }
-
-    /* Log area — occupies 2/3 of right column height */
+    /* Logs: top 2/3 of right column */
     .orch-logs {
-      flex: 2 1 0;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      overflow: hidden;
-      background: var(--noir-card);
-      border: 1px solid var(--noir-border);
+      flex: 2 1 0; display: flex; flex-direction: column;
+      min-height: 0; overflow: hidden;
+      background: var(--noir-card); border: 1px solid var(--noir-border);
       border-radius: 10px;
     }
     .orch-logs .orch-card-title {
-      padding: 10px 14px 8px;
-      margin-bottom: 0;
-      border-bottom: 1px solid var(--noir-border);
+      padding: 10px 14px 8px; margin-bottom: 0; border-bottom: 1px solid var(--noir-border);
     }
-    .log-body {
-      flex: 1;
-      min-height: 0;
-      max-height: 500px;
-      padding: 6px 4px;
-      overflow-y: auto;
-      overflow-x: hidden;
+    .log-body { flex: 1; min-height: 0; padding: 6px 4px; overflow-y: auto; overflow-x: hidden; }
+    .log-body::-webkit-scrollbar { width: 5px; }
+    .log-body::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+    .log-entry {
+      display: flex; gap: 10px; padding: 3px 0;
+      font-family: 'Courier Prime', monospace; font-size: 11px;
+      line-height: 1.5; animation: logSlide 200ms ease both;
     }
-    .log-body::-webkit-scrollbar { width: 6px; }
-    .log-body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-    .log-entry { display: flex; gap: 10px; padding: 4px 0; font-family: 'Courier Prime', monospace; font-size: 11px; line-height: 1.5; animation: logSlide 200ms ease both; }
-    @keyframes logSlide { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
-    .log-time { color: var(--noir-muted); flex-shrink: 0; }
-    .log-agent { flex-shrink: 0; min-width: 80px; }
-    .log-agent.search        { color: #4ade80; }
-    .log-agent.rag           { color: #60a5fa; }
+    @keyframes logSlide { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:translateX(0)} }
+    .log-time   { color: var(--noir-muted); flex-shrink: 0; font-size: 10px; }
+    .log-agent  { flex-shrink: 0; min-width: 72px; font-size: 10px; }
+    .log-agent.search_worker  { color: #4ade80; }
+    .log-agent.rag_worker    { color: #60a5fa; }
     .log-agent.coder         { color: #facc15; }
-    .log-agent.supervisor    { color: #c0392b; }
+    .log-agent.supervisor     { color: #c0392b; }
     .log-agent.self_healer   { color: #facc15; }
-    .log-agent.system        { color: var(--noir-dim); }
-    .log-msg { color: var(--noir-text); word-break: break-all; }
-
-    /* 评价区（质量条、徽章、元数据） */
+    .log-agent.system         { color: var(--noir-dim); }
+    .log-msg { color: var(--noir-text); word-break: break-all; font-size: 11px; }
+    /* Eval: bottom 1/3 right column */
     .orch-eval { flex: 0 0 auto; display: flex; flex-direction: column; }
-    .eval-meta { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--noir-border); font-family: 'Courier Prime', monospace; font-size: 10px; color: var(--noir-muted); line-height: 1.6; display: none; }
+    .eval-meta {
+      margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--noir-border);
+      font-family: 'Courier Prime', monospace; font-size: 10px;
+      color: var(--noir-muted); line-height: 1.6; display: none;
+    }
     .eval-meta.visible { display: block; }
-    .result-quality { display: flex; align-items: center; gap: 8px; }
+    .resultquality-row { display: flex; align-items: center; gap: 8px; }
     .quality-bar-wrap { flex: 1; height: 6px; background: var(--noir-border); border-radius: 3px; overflow: hidden; }
     .quality-bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #c0392b, #e74c3c); transition: width 600ms ease; }
     .quality-bar.high { background: linear-gradient(90deg, #27ae60, #2ecc71); }
-    .quality-score-label { font-family: 'Courier Prime', monospace; font-size: 13px; color: #c0392b; font-weight: 700; }
+    .quality-score-label { font-family: 'Courier Prime', monospace; font-size: 14px; color: #c0392b; font-weight: 700; }
     .quality-score-label.high { color: #2ecc71; }
-    .result-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 4px; font-family: 'Courier Prime', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; margin-left: 10px; }
+    .result-badge {
+      display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+      border-radius: 4px; font-family: 'Courier Prime', monospace;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    }
     .result-badge.pass { background: rgba(39,174,96,0.15); border: 1px solid rgba(39,174,96,0.4); color: #2ecc71; }
     .result-badge.fail { background: rgba(192,57,43,0.15); border: 1px solid rgba(192,57,43,0.4); color: #c0392b; }
-
-    /* Claude 风格：可点击的输出卡片 */
-    .orch-output { flex: 0 0 auto; }
+    /* Output: bottom 1/3 right column */
+    .orch-output { flex: 1 1 0; display: flex; flex-direction: column; min-height: 0; }
     .artifact-card {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 14px;
-      background: var(--noir-surface);
-      border: 1px solid var(--noir-border);
-      border-radius: 10px;
-      cursor: pointer;
-      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+      flex: 1; display: flex; align-items: center; gap: 12px;
+      padding: 12px 14px; background: var(--noir-surface);
+      border: 1px solid var(--noir-border); border-radius: 8px;
+      cursor: pointer; transition: border-color 160ms, background 160ms, transform 160ms;
+      min-height: 60px;
     }
-    .artifact-card:hover {
-      border-color: var(--noir-border-hi);
-      background: rgba(255,255,255,0.03);
-    }
+    .artifact-card:hover { border-color: var(--noir-border-hi); background: rgba(255,255,255,0.03); }
     .artifact-card:active { transform: scale(0.99); }
-    .artifact-card.disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-      pointer-events: none;
-    }
+    .artifact-card.disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
     .artifact-icon {
-      width: 40px;
-      height: 40px;
-      border-radius: 8px;
-      background: rgba(139,0,0,0.15);
-      border: 1px solid rgba(139,0,0,0.35);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
+      width: 38px; height: 38px; border-radius: 8px;
+      background: rgba(139,0,0,0.15); border: 1px solid rgba(139,0,0,0.35);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
-    .artifact-icon svg { width: 20px; height: 20px; stroke: #c0392b; fill: none; stroke-width: 1.5; }
+    .artifact-icon svg { width: 18px; height: 18px; stroke: #c0392b; fill: none; stroke-width: 1.5; }
     .artifact-text { flex: 1; min-width: 0; }
     .artifact-title { font-family: var(--font-sans); font-size: 13px; font-weight: 600; color: var(--noir-text); }
-    .artifact-preview { font-family: 'Courier Prime', monospace; font-size: 10px; color: var(--noir-muted); margin-top: 4px; line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .artifact-preview {
+      font-family: 'Courier Prime', monospace; font-size: 10px; color: var(--noir-muted);
+      margin-top: 4px; line-height: 1.45; overflow: hidden;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    }
     .artifact-chevron { flex-shrink: 0; color: var(--noir-dim); font-size: 18px; line-height: 1; }
-
-    /* 半屏抽屉 + 遮罩 */
+    /* Drawer */
     .orch-drawer-backdrop {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.5);
-      z-index: 200;
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200;
+      opacity: 0; visibility: hidden; pointer-events: none;
       transition: opacity 220ms ease, visibility 220ms ease;
     }
     .orch-drawer-backdrop.open { opacity: 1; visibility: visible; pointer-events: auto; }
     .orch-drawer {
-      position: fixed;
-      top: 0;
-      right: 0;
-      width: min(50vw, 900px);
-      min-width: 320px;
-      height: 100%;
-      max-height: 100dvh;
-      background: var(--noir-card);
-      border-left: 1px solid var(--noir-border);
-      box-shadow: -12px 0 40px rgba(0,0,0,0.45);
-      z-index: 201;
-      display: flex;
-      flex-direction: column;
+      position: fixed; top: 0; right: 0;
+      width: min(50vw, 900px); min-width: 320px;
+      height: 100%; max-height: 100dvh;
+      background: var(--noir-card); border-left: 1px solid var(--noir-border);
+      box-shadow: -12px 0 40px rgba(0,0,0,0.45); z-index: 201;
+      display: flex; flex-direction: column;
       transform: translateX(100%);
       transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
     }
     .orch-drawer.open { transform: translateX(0); }
     .orch-drawer-header {
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--noir-border);
+      flex-shrink: 0; display: flex; align-items: center;
+      justify-content: space-between; gap: 10px;
+      padding: 14px 16px; border-bottom: 1px solid var(--noir-border);
     }
     .orch-drawer-title { font-family: var(--font-sans); font-size: 14px; font-weight: 600; color: var(--noir-text); }
     .orch-drawer-actions { display: flex; align-items: center; gap: 8px; }
     .orch-drawer-btn {
-      padding: 6px 12px;
-      border-radius: 6px;
-      border: 1px solid var(--noir-border);
-      background: var(--noir-surface);
-      color: var(--noir-text);
-      font-size: 12px;
-      font-family: var(--font-sans);
-      cursor: pointer;
+      padding: 6px 12px; border-radius: 6px; border: 1px solid var(--noir-border);
+      background: var(--noir-surface); color: var(--noir-text);
+      font-size: 12px; font-family: var(--font-sans); cursor: pointer;
       transition: border-color 150ms, background 150ms;
     }
     .orch-drawer-btn:hover { border-color: var(--noir-border-hi); }
     .orch-drawer-close {
-      width: 32px;
-      height: 32px;
-      border-radius: 6px;
-      border: none;
-      background: transparent;
-      color: var(--noir-dim);
-      font-size: 20px;
-      line-height: 1;
-      cursor: pointer;
+      width: 32px; height: 32px; border-radius: 6px; border: none;
+      background: transparent; color: var(--noir-dim); font-size: 20px;
+      line-height: 1; cursor: pointer;
     }
     .orch-drawer-close:hover { color: var(--noir-text); background: rgba(255,255,255,0.05); }
-    .orch-drawer-body {
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      padding: 16px 18px 24px;
-    }
+    .orch-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px 24px; }
     .orch-drawer-body::-webkit-scrollbar { width: 6px; }
-    .orch-drawer-body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .orch-drawer-body::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
     .orch-drawer-pre {
-      margin: 0;
-      font-family: 'Courier Prime', monospace;
-      font-size: 12px;
-      line-height: 1.65;
-      color: var(--noir-text);
-      white-space: pre-wrap;
-      word-break: break-word;
+      margin: 0; font-family: 'Courier Prime', monospace; font-size: 12px;
+      line-height: 1.65; color: var(--noir-text);
+      white-space: pre-wrap; word-break: break-word;
     }
-
-    .orch-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--noir-muted); font-family: 'Courier Prime', monospace; font-size: 12px; gap: 10px; }
-    .orch-empty svg { width: 40px; height: 40px; stroke: #333; fill: none; stroke-width: 1; }
+    .orch-empty {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; flex: 1; color: var(--noir-muted);
+      font-family: 'Courier Prime', monospace; font-size: 11px; gap: 8px;
+    }
+    .orch-empty svg { width: 28px; height: 28px; stroke: #2a2a2a; fill: none; stroke-width: 1; }
     .back-row { display: flex; align-items: center; }
-    .back-btn { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--noir-border); background: transparent; color: var(--noir-dim); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 150ms; }
+    .back-btn {
+      display: flex; align-items: center; gap: 6px; padding: 5px 12px;
+      border-radius: 6px; border: 1px solid var(--noir-border);
+      background: transparent; color: var(--noir-dim); font-size: 12px;
+      font-family: var(--font-sans); cursor: pointer; transition: all 150ms;
+    }
     .back-btn:hover { border-color: var(--noir-border-hi); color: var(--noir-text); }
     .back-btn svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; }
-    .spinner { display: inline-block; width: 10px; height: 10px; border: 1.5px solid var(--noir-border-hi); border-top-color: #c0392b; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    .spinner {
+      display: inline-block; width: 10px; height: 10px;
+      border: 1.5px solid var(--noir-border-hi); border-top-color: #c0392b;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
     @keyframes spin { to{transform:rotate(360deg)} }
   </style>
 </head>
@@ -370,14 +350,10 @@
 </div>
 
 <script>
-// ═══════════════════════════════════════════════════════════════════════════
-//  Page content template
-// ═══════════════════════════════════════════════════════════════════════════
+(function() {
 var ORCHESTRATE_CONTENT = [
-  '<div class="orch-page-root">',
   '<div class="orchestrate-page">',
 
-    // LEFT
     '<div class="orch-left">',
       '<div class="back-row">',
         '<button class="back-btn" onclick="navigateTo(\'/tasks\')">',
@@ -385,7 +361,6 @@ var ORCHESTRATE_CONTENT = [
         '</button>',
       '</div>',
 
-      // Requirement
       '<div class="orch-card">',
         '<div class="orch-card-title">// 需求输入</div>',
         '<textarea class="orch-req-input" id="orch-req" placeholder="输入你的复杂需求..."></textarea>',
@@ -397,15 +372,11 @@ var ORCHESTRATE_CONTENT = [
         '</div>',
       '</div>',
 
-      // Agent config
       '<div class="orch-card">',
-        '<div class="orch-card-title">// Agent 配置</div>',
-        '<label class="agent-toggle"><input type="checkbox" id="agent-search" checked><div class="agent-check-box"></div><div class="agent-meta"><div class="agent-dot search"></div><span class="agent-name">Search Worker</span></div></label>',
-        '<label class="agent-toggle"><input type="checkbox" id="agent-rag" checked><div class="agent-check-box"></div><div class="agent-meta"><div class="agent-dot rag"></div><span class="agent-name">RAG Worker</span></div></label>',
-        '<label class="agent-toggle"><input type="checkbox" id="agent-coder" checked><div class="agent-check-box"></div><div class="agent-meta"><div class="agent-dot coder"></div><span class="agent-name">Coder</span></div></label>',
+        '<div class="orch-card-title">// Agent 配置 <span id="agent-list-status" style="font-size:10px;color:var(--noir-muted);font-weight:normal"></span></div>',
+        '<div id="orch-agent-list"><div style="font-family:\'Courier Prime\',monospace;font-size:11px;color:var(--noir-muted);padding:8px 0;text-align:center">加载中...</div></div>',
       '</div>',
 
-      // Quality
       '<div class="orch-card">',
         '<div class="orch-card-title">// 质量阈值</div>',
         '<div class="quality-row">',
@@ -414,7 +385,6 @@ var ORCHESTRATE_CONTENT = [
         '</div>',
       '</div>',
 
-      // Job history
       '<div class="orch-card" style="flex:1;min-height:0;display:flex;flex-direction:column;">',
         '<div class="orch-card-title">// 任务历史 <span id="job-count" style="font-size:10px;color:var(--noir-muted);font-weight:normal;margin-left:6px;"></span></div>',
         '<div class="job-list" id="job-list">',
@@ -423,10 +393,7 @@ var ORCHESTRATE_CONTENT = [
       '</div>',
     '</div>',
 
-    // RIGHT
-    '<div class="orch-right">',
-
-      // Progress bar
+    '<div class="orch-mid">',
       '<div class="progress-header" id="progress-header" style="display:none">',
         '<span class="progress-label">整体进度</span>',
         '<div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>',
@@ -434,63 +401,66 @@ var ORCHESTRATE_CONTENT = [
         '<span class="step-badge" id="step-badge">等待开始</span>',
         '<button class="orch-btn cancel-btn" id="cancel-btn" onclick="cancelSelectedJob()" style="flex:none;padding:5px 12px;font-size:11px;">取消</button>',
       '</div>',
-
-      // Step timeline (collapsible)
       '<div class="step-timeline" id="step-timeline">',
         '<div class="step-timeline-header" onclick="toggleTimeline()">',
-          '<span class="step-timeline-title">// 执行步骤</span>',
+          '<span class="step-timeline-title">// 执行步骤 · 三省六部与台阁</span>',
           '<span class="step-timeline-toggle" id="timeline-toggle">&#9660;</span>',
         '</div>',
         '<div class="step-list" id="step-list">',
           '<div class="orch-empty" id="step-empty">',
-            '<svg viewBox="0 0 24 24" width="24" height="24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>',
+            '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>',
             '选择任务查看步骤',
           '</div>',
         '</div>',
       '</div>',
+    '</div>',
 
-      // Logs
-      '<div class="orch-card orch-logs">',
+    '<div class="orch-right">',
+
+      '<div class="orch-logs">',
         '<div class="orch-card-title">// 执行日志</div>',
         '<div class="log-body" id="log-body">',
           '<div class="orch-empty" id="log-empty">',
-            '<svg viewBox="0 0 24 24" width="24" height="24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>暂无日志',
+            '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>暂无日志',
           '</div>',
         '</div>',
       '</div>',
 
-      // 评价（质量、徽章、运行元数据）
-      '<div class="orch-card orch-eval">',
-        '<div class="orch-card-title">// 评价</div>',
-        '<div class="result-quality" id="result-quality-row" style="display:none">',
-          '<div class="quality-bar-wrap"><div class="quality-bar" id="quality-bar"></div></div>',
-          '<span class="quality-score-label" id="quality-score-label">0.0</span>',
-          '<span class="result-badge" id="result-badge"></span>',
-        '</div>',
-        '<div class="eval-meta" id="eval-meta">',
-          '<div>循环次数：<span id="eval-loop">—</span></div>',
-          '<div>自修复尝试：<span id="eval-heal">—</span></div>',
-        '</div>',
-        '<div class="orch-empty" id="eval-empty" style="min-height:72px;padding:16px 0;">',
-          '<svg viewBox="0 0 24 24" width="24" height="24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>完成后显示质量评价',
-        '</div>',
-      '</div>',
+      '<div style="flex:1 1 0;display:flex;flex-direction:column;gap:10px;min-height:0;">',
 
-      // 输出（Claude 风格卡片 → 点击打开半屏抽屉）
-      '<div class="orch-card orch-output">',
-        '<div class="orch-card-title">// 输出结果</div>',
-        '<div class="artifact-card disabled" id="artifact-card" role="button" tabindex="0" onclick="openResultDrawer()" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openResultDrawer();}">',
-          '<div class="artifact-icon">',
-            '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+        '<div class="orch-card orch-eval">',
+          '<div class="orch-card-title">// 评价</div>',
+          '<div class="resultquality-row" id="resultquality-row" style="display:none">',
+            '<div class="quality-bar-wrap"><div class="quality-bar" id="quality-bar"></div></div>',
+            '<span class="quality-score-label" id="quality-score-label">0.0</span>',
+            '<span class="result-badge" id="result-badge"></span>',
           '</div>',
-          '<div class="artifact-text">',
-            '<div class="artifact-title" id="artifact-title">编排汇总报告</div>',
-            '<div class="artifact-preview" id="artifact-preview">等待任务完成…</div>',
+          '<div class="eval-meta" id="eval-meta">',
+            '<div>循环次数：<span id="eval-loop">&#8212;</span></div>',
+            '<div>自修复尝试：<span id="eval-heal">&#8212;</span></div>',
           '</div>',
-          '<span class="artifact-chevron">&#8250;</span>',
+          '<div class="orch-empty" id="eval-empty" style="min-height:40px;padding:10px 0;">',
+            '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>完成后显示质量评价',
+          '</div>',
         '</div>',
+
+        '<div class="orch-card orch-output">',
+          '<div class="orch-card-title">// 输出结果</div>',
+          '<div class="artifact-card disabled" id="artifact-card" role="button" tabindex="0" onclick="openResultDrawer()" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openResultDrawer();}">',
+            '<div class="artifact-icon">',
+              '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+            '</div>',
+            '<div class="artifact-text">',
+              '<div class="artifact-title" id="artifact-title">编排汇总报告</div>',
+              '<div class="artifact-preview" id="artifact-preview">等待任务完成&#8230;</div>',
+            '</div>',
+            '<span class="artifact-chevron">&#8250;</span>',
+          '</div>',
+        '</div>',
+
       '</div>',
     '</div>',
+
   '</div>',
 
   '<div class="orch-drawer-backdrop" id="orch-drawer-backdrop" onclick="closeResultDrawer()"></div>',
@@ -507,30 +477,61 @@ var ORCHESTRATE_CONTENT = [
   '</div>'
 ].join('');
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  State
-// ═══════════════════════════════════════════════════════════════════════════
-var _selectedJobId  = null;
-var _streamReaders  = {};     // jobId → { cancelFn }
-var _timelineOpen   = true;
-var _steps          = [];      // [{id, name, desc, status, time}]
-var _stepIdx        = 0;       // current active step index
-var _listPollTimer  = null;
-var _orchFullSummary = '';     // 完整汇总文本（抽屉内展示 / 复制）
-var _orchEscBound   = false;
-var _orchLogLayoutProbeCount = 0;
+var _selectedJobId = null;
+var _streamReaders = {};
+var _timelineOpen = true;
+var _steps = [];
+var _stepIdx = 0;
+var _listPollTimer = null;
+var _orchFullSummary = '';
+var _orchEscBound = false;
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Page lifecycle
-// ═══════════════════════════════════════════════════════════════════════════
+/** 与后端事件 id 对齐：phase_* 由前端根据 supervisor_plan / worker_start 驱动 */
+var STEP_TEMPLATES = {
+  phase_zhongshu: { lane: '三省 · 制敕', name: '中书省 · 需求制敕', desc: '承接需求、制敕纲领（Chief / Product 对齐）' },
+  phase_menxia:   { lane: '三省 · 审议', name: '门下省 · 审议画可', desc: '封驳检视、合规闸口（Policy / Safety）' },
+  phase_shangshu: { lane: '三省 · 牒发', name: '尚书省 · 牒发六曹', desc: '总领执行、牒发六曹工单（Eng 调度）' },
+  search_worker:  { lane: '六部 · 户曹', name: '户曹 · 度支访求', desc: '外联检索与采证（Search / Research）' },
+  rag_worker:     { lane: '六部 · 礼曹', name: '礼曹 · 典籍记问', desc: '典籍记忆与上下文（RAG / Memory）' },
+  coder:          { lane: '六部 · 工曹', name: '工曹 · 营造缮写', desc: '代码与交付物缮写（Code / Build）' },
+  quality_eval:   { lane: '六部 · 刑曹', name: '刑曹 · 质勘核议', desc: '综合质评、核议是否达阈（QA / Review）' },
+  self_heal:      { lane: '六部 · 吏曹', name: '吏曹 · 课功纠偏', desc: '低分工单课功、纠偏再呈（Self-heal）' },
+  final_result:   { lane: '台阁 · 进呈', name: '台阁 · 汇抄进呈', desc: '汇总封章、进呈终稿（Delivery）' },
+};
+
+function _orchHasStepId(sid) {
+  for (var i = 0; i < _steps.length; i++) { if (_steps[i].id === sid) return true; }
+  return false;
+}
+
+function _orchHasWorkerKind(enabledAgents, participants, wk) {
+  var p = participants || [];
+  for (var i = 0; i < p.length; i++) {
+    if (p[i].worker_kind === wk) return true;
+  }
+  var ea = enabledAgents || [];
+  for (var j = 0; j < ea.length; j++) {
+    var id = String(ea[j]).toLowerCase();
+    if (wk === 'search_worker') {
+      if (id.indexOf('search') !== -1 && id.indexOf('rag') === -1) return true;
+    } else if (wk === 'rag_worker') {
+      if (id.indexOf('rag') !== -1) return true;
+    } else if (wk === 'coder') {
+      if (id.indexOf('coder') !== -1) return true;
+    }
+  }
+  return false;
+}
+
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function _orchDrawerEsc(e) {
-  if (e.key !== 'Escape') {
-    return;
-  }
+  if (e.key !== 'Escape') return;
   var dr = document.getElementById('orch-drawer');
-  if (dr && dr.classList.contains('open')) {
-    closeResultDrawer();
-  }
+  if (dr && dr.classList.contains('open')) closeResultDrawer();
 }
 
 function orchestrateOnShow() {
@@ -542,23 +543,104 @@ function orchestrateOnShow() {
     document.addEventListener('keydown', _orchDrawerEsc);
     _orchEscBound = true;
   }
+  loadOrchAgents();
+  // 深链：?job=job_xxx
+  var params = new URLSearchParams(window.location.search);
+  var deepJob = params.get('job');
+  if (deepJob) {
+    setTimeout(function() { selectJob(deepJob); }, 300);
+  }
 }
+
 function orchestrateOnSave() { return null; }
+
 registerSPA('/orchestrate', ORCHESTRATE_CONTENT, orchestrateOnShow, orchestrateOnSave);
 injectStyles();
 initPage('/orchestrate');
 initSPA('/orchestrate');
 
-// Quality slider
 var qualSlider = document.getElementById('orch-quality');
 if (qualSlider) qualSlider.addEventListener('input', function() {
   var v = document.getElementById('orch-quality-val');
   if (v) v.textContent = parseFloat(this.value).toFixed(1);
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Timeline toggle
-// ═══════════════════════════════════════════════════════════════════════════
+var _orchAgents = [];
+
+function loadOrchAgents() {
+  fetch('/api/agents').then(function(r) { return r.ok ? r.json() : null; }).then(function(agents) {
+    if (!agents) return;
+    _orchAgents = agents.filter(function(a) { return a.is_active; });
+    renderOrchAgentList(_orchAgents);
+  }).catch(function() {});
+}
+
+function renderOrchAgentList(agents) {
+  var container = document.getElementById('orch-agent-list');
+  var statusEl = document.getElementById('agent-list-status');
+  if (!container) return;
+  if (statusEl) statusEl.textContent = agents.length + ' 个在线';
+
+  // worker_kind -> dot color / name
+  var kindMeta = {
+    'search_worker': { cls: 'search', label: 'Search Worker' },
+    'rag_worker':    { cls: 'rag',    label: 'RAG Worker' },
+    'coder':         { cls: 'coder',  label: 'Coder Worker' },
+  };
+
+  var sorted = agents.slice().sort(function(a, b) {
+    if (a.id === 'agent_main') return -1;
+    if (b.id === 'agent_main') return 1;
+    return 0;
+  });
+
+  container.innerHTML = sorted.map(function(a) {
+    var meta = kindMeta[a.worker_kind] || { cls: 'generic', label: a.role || a.name };
+    var dotCls = meta.cls;
+    var label = a.name || a.id;
+    var isChief = a.id === 'agent_main' || String(a.role || '').toLowerCase() === 'chief';
+    // 内置三 Worker 默认勾选；Chief Coordinator 必选且不可取消
+    var isBuiltIn = !!a.worker_kind;
+    var checked = isBuiltIn || isChief ? ' checked' : '';
+    var disabled = isChief ? ' disabled' : '';
+    var chiefTag = isChief ? ' <span style="font-size:9px;color:var(--noir-muted)">(必选·总协调)</span>' : '';
+    return '<label class="agent-toggle">' +
+      '<input type="checkbox" data-agent-id="' + esc(a.id) + '"' + checked + disabled + '>' +
+      '<div class="agent-check-box"></div>' +
+      '<div class="agent-meta">' +
+        '<div class="agent-dot ' + esc(dotCls) + '"></div>' +
+        '<span class="agent-name">' + esc(label) + chiefTag + '</span>' +
+      '</div>' +
+    '</label>';
+  }).join('');
+}
+
+function getSelectedAgentIds() {
+  var ids = [];
+  var chiefId = null;
+  _orchAgents.forEach(function(a) {
+    if (a.id === 'agent_main' || String(a.role || '').toLowerCase() === 'chief') chiefId = a.id;
+  });
+  var checkboxes = document.querySelectorAll('#orch-agent-list input[data-agent-id]');
+  checkboxes.forEach(function(cb) {
+    var aid = cb.dataset.agentId;
+    if (cb.checked || (cb.disabled && aid === 'agent_main')) {
+      if (ids.indexOf(aid) === -1) ids.push(aid);
+    }
+  });
+  if (chiefId && ids.indexOf(chiefId) === -1) ids.unshift(chiefId);
+  if (chiefId) {
+    ids = ids.filter(function(x) { return x !== chiefId; });
+    ids.unshift(chiefId);
+  }
+  // 若未选任何执行 Agent，默认选内置三 Worker
+  if (ids.length <= (chiefId ? 1 : 0)) {
+    var extras = _orchAgents.filter(function(a) { return !!a.worker_kind; }).map(function(a) { return a.id; });
+    extras.forEach(function(id) { if (ids.indexOf(id) === -1) ids.push(id); });
+  }
+  return ids;
+}
+
 function toggleTimeline() {
   _timelineOpen = !_timelineOpen;
   var tl = document.getElementById('step-timeline');
@@ -567,34 +649,30 @@ function toggleTimeline() {
   if (toggle) toggle.innerHTML = _timelineOpen ? '&#9660;' : '&#9654;';
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Step definitions
-// ═══════════════════════════════════════════════════════════════════════════
-var STEP_DEFS = [
-  { id: 'supervisor_plan',  name: 'Supervisor 规划',    desc: '拆解需求，生成执行计划', color: '#c0392b' },
-  { id: 'search_worker',    name: 'Search Worker',     desc: '并行执行 Tavily 搜索', color: '#4ade80' },
-  { id: 'rag_worker',        name: 'RAG Worker',         desc: '并行执行记忆检索',     color: '#60a5fa' },
-  { id: 'coder',             name: 'Coder Worker',       desc: '基于上下文生成代码',   color: '#facc15' },
-  { id: 'quality_eval',      name: '质量评估',            desc: '综合评分，检查阈值',  color: '#c0392b' },
-  { id: 'self_heal',         name: '自修复',              desc: '低质量结果自修复',     color: '#facc15' },
-  { id: 'final_result',      name: '最终结果',            desc: '汇总报告，输出结果',  color: '#2ecc71' },
-];
-
-function buildStepList(enabledAgents) {
+function buildStepList(enabledAgents, job) {
+  var parts = (job && job.participants) ? job.participants : [];
   _steps = [];
-  // Supervisor always first
-  _steps.push({ ...STEP_DEFS[0], status: 'pending' });
-  if (enabledAgents && enabledAgents.includes('search')) _steps.push({ ...STEP_DEFS[1], status: 'pending' });
-  if (enabledAgents && enabledAgents.includes('rag'))    _steps.push({ ...STEP_DEFS[2], status: 'pending' });
-  if (enabledAgents && enabledAgents.includes('coder'))  _steps.push({ ...STEP_DEFS[3], status: 'pending' });
-  _steps.push({ ...STEP_DEFS[4], status: 'pending' });
-  _steps.push({ ...STEP_DEFS[6], status: 'pending' });
+  function addTmpl(id) {
+    var t = STEP_TEMPLATES[id];
+    if (!t) return;
+    _steps.push({ id: id, lane: t.lane, name: t.name, desc: t.desc, status: 'pending' });
+  }
+  addTmpl('phase_zhongshu');
+  addTmpl('phase_menxia');
+  addTmpl('phase_shangshu');
+  if (_orchHasWorkerKind(enabledAgents, parts, 'search_worker')) addTmpl('search_worker');
+  if (_orchHasWorkerKind(enabledAgents, parts, 'rag_worker')) addTmpl('rag_worker');
+  if (_orchHasWorkerKind(enabledAgents, parts, 'coder')) addTmpl('coder');
+  addTmpl('quality_eval');
+  addTmpl('self_heal');
+  addTmpl('final_result');
   _stepIdx = 0;
   renderStepList();
 }
 
 function updateStepStatus(eventType, newStatus) {
-  var idx = _steps.findIndex(function(s) { return s.id === eventType; });
+  var idx = -1;
+  for (var i = 0; i < _steps.length; i++) { if (_steps[i].id === eventType) { idx = i; break; } }
   if (idx === -1) return;
   _steps[idx].status = newStatus;
   if (newStatus === 'active') _stepIdx = idx;
@@ -603,49 +681,45 @@ function updateStepStatus(eventType, newStatus) {
 }
 
 function updateProgress() {
-  var done = _steps.filter(function(s) { return s.status === 'done'; }).length;
-  var pct  = _steps.length ? Math.round((done / _steps.length) * 100) : 0;
+  var done = 0;
+  for (var i = 0; i < _steps.length; i++) { if (_steps[i].status === 'done') done++; }
+  var pct = _steps.length ? Math.round((done / _steps.length) * 100) : 0;
   var fill = document.getElementById('progress-fill');
   var pctEl = document.getElementById('progress-pct');
   var badge = document.getElementById('step-badge');
-  if (fill) {
-    fill.style.width = pct + '%';
-    fill.className = 'progress-fill' + (pct >= 100 ? ' high' : '');
-  }
+  if (fill) { fill.style.width = pct + '%'; fill.className = 'progress-fill' + (pct >= 100 ? ' high' : ''); }
   if (pctEl) pctEl.textContent = pct + '%';
-  if (badge && _steps[_stepIdx]) {
-    badge.textContent = _steps[_stepIdx].name;
-  }
+  if (badge && _steps[_stepIdx]) badge.textContent = _steps[_stepIdx].name;
 }
 
 function renderStepList() {
   var listEl = document.getElementById('step-list');
   var emptyEl = document.getElementById('step-empty');
   if (!listEl) return;
-
   if (!_steps.length) {
     listEl.innerHTML = '';
     if (emptyEl) emptyEl.style.display = '';
     return;
   }
   if (emptyEl) emptyEl.style.display = 'none';
-
   listEl.innerHTML = '';
-  _steps.forEach(function(step, i) {
+  for (var i = 0; i < _steps.length; i++) {
+    var step = _steps[i];
     var icon = step.status === 'done' ? '&#10003;' :
                step.status === 'active' ? '&#8226;' :
-               step.status === 'fail' ? '&#10007;' : (i + 1);
+               step.status === 'fail' ? '&#10007;' : String(i + 1);
     var item = document.createElement('div');
     item.className = 'step-item';
     item.innerHTML =
       '<div class="step-icon ' + step.status + '">' + icon + '</div>' +
       '<div class="step-content">' +
+        (step.lane ? '<div class="step-lane">' + esc(step.lane) + '</div>' : '') +
         '<div class="step-name">' + esc(step.name) + '</div>' +
         '<div class="step-desc">' + esc(step.desc) + '</div>' +
       '</div>' +
       '<div class="step-time" id="step-time-' + i + '"></div>';
     listEl.appendChild(item);
-  });
+  }
 }
 
 function setStepTime(i, t) {
@@ -653,18 +727,12 @@ function setStepTime(i, t) {
   if (el) el.textContent = t;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Start new job
-// ═══════════════════════════════════════════════════════════════════════════
 function startNewJob() {
-  var reqEl  = document.getElementById('orch-req');
-  var req    = reqEl ? reqEl.value.trim() : '';
+  var reqEl = document.getElementById('orch-req');
+  var req = reqEl ? reqEl.value.trim() : '';
   if (!req) { toast('请输入需求', 'error'); return; }
 
-  var enabled = [];
-  if (document.getElementById('agent-search').checked) enabled.push('search');
-  if (document.getElementById('agent-rag').checked)    enabled.push('rag');
-  if (document.getElementById('agent-coder').checked)   enabled.push('coder');
+  var enabled = getSelectedAgentIds();
   if (!enabled.length) { toast('请至少选择一个 Agent', 'error'); return; }
 
   var qualityThreshold = parseFloat(document.getElementById('orch-quality').value);
@@ -690,9 +758,6 @@ function startNewJob() {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Select a job
-// ═══════════════════════════════════════════════════════════════════════════
 function selectJob(jobId) {
   if (_selectedJobId && _streamReaders[_selectedJobId]) {
     _streamReaders[_selectedJobId].cancelFn();
@@ -703,34 +768,21 @@ function selectJob(jobId) {
   fetchJobAndStream(jobId);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Fetch job + start SSE
-// ═══════════════════════════════════════════════════════════════════════════
 function fetchJobAndStream(jobId) {
   fetch('/api/orchestrate/jobs/' + encodeURIComponent(jobId))
     .then(function(r) { return r.json(); })
     .then(function(job) {
       if (job.error) { console.error(job.error); return; }
-
-      // Show progress bar
       var ph = document.getElementById('progress-header');
       if (ph) ph.style.display = '';
-
-      // Build steps from enabled agents
-      buildStepList(job.enabled_agents || []);
-      updateStepStatus('supervisor_plan', 'active');
-
-      // Show history events
+      buildStepList(job.enabled_agents || [], job);
+      if (_orchHasStepId('phase_zhongshu')) updateStepStatus('phase_zhongshu', 'active');
       if (job.events && job.events.length) {
-        job.events.forEach(function(ev) { handleJobEvent(jobId, ev.type, ev.data); });
+        for (var i = 0; i < job.events.length; i++) handleJobEvent(jobId, job.events[i].type, job.events[i].data);
       }
-
-      // Result if done
-      if (job.status === 'done' && job.result)     { onFinalResult(job.result); }
-      if (job.status === 'failed')                   { onJobDone('failed'); }
-      if (job.status === 'cancelled')               { onJobDone('cancelled'); }
-
-      // SSE stream
+      if (job.status === 'done' && job.result)     onFinalResult(job.result);
+      if (job.status === 'failed')                  onJobDone('failed');
+      if (job.status === 'cancelled')                onJobDone('cancelled');
       if (job.status === 'pending' || job.status === 'running') openJobStream(jobId);
     })
     .catch(function(err) { console.error('Fetch job error', err); });
@@ -748,15 +800,15 @@ function openJobStream(jobId) {
     .catch(function(err) {
       if (err.name === 'AbortError') return;
       console.error('Job stream error', err);
-      setTimeout(function() {
+      var _retryTimer = setTimeout(function() {
         if (_selectedJobId === jobId) fetchJobAndStream(jobId);
       }, 2000);
     });
 
   function pump(jid, rdr) {
-    var decoder  = new TextDecoder();
-    var buffer   = '';
-    var tick = function() {
+    var decoder = new TextDecoder();
+    var buffer = '';
+    (function tick() {
       if (!rdr) return;
       rdr.read().then(function(result) {
         if (result.done) { onStreamDone(jid); return; }
@@ -766,9 +818,8 @@ function openJobStream(jobId) {
         for (var i = 0; i < lines.length; i++) {
           var line = lines[i].trim();
           if (!line) continue;
-          // SSE format: data: {"type": "...", "data": {...}}
-          if (line.startsWith('data: ')) {
-            var payload = line.slice(6);
+          if (line.substring(0, 6) === 'data: ') {
+            var payload = line.substring(6);
             try {
               var data = JSON.parse(payload);
               handleJobEvent(jid, data.type || '?', data.data || data);
@@ -777,8 +828,7 @@ function openJobStream(jobId) {
         }
         tick();
       }).catch(function(err) { console.error('Pump error', err); onStreamDone(jid); });
-    };
-    tick();
+    })();
   }
 
   function onStreamDone(jid) {
@@ -790,9 +840,6 @@ function openJobStream(jobId) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Refresh job list
-// ═══════════════════════════════════════════════════════════════════════════
 function refreshJobList() {
   fetch('/api/orchestrate/jobs')
     .then(function(r) { return r.json(); })
@@ -810,7 +857,8 @@ function renderJobList(jobs) {
     listEl.innerHTML = '<div class="job-empty">暂无任务</div>'; return;
   }
   listEl.innerHTML = '';
-  jobs.forEach(function(job) {
+  for (var i = 0; i < jobs.length; i++) {
+    var job = jobs[i];
     var item = document.createElement('div');
     item.className = 'job-item' + (job.job_id === _selectedJobId ? ' selected' : '');
     item.dataset.jobId = job.job_id;
@@ -825,28 +873,25 @@ function renderJobList(jobs) {
       '<div class="job-status-dot ' + job.status + '"></div>' +
       '<div class="job-info">' +
         '<div class="job-req-preview" title="' + esc(job.requirement) + '">' + esc(job.requirement) + '</div>' +
-        '<div class="job-meta">' + statusLabel + ' · ' + (job.created_at || '').slice(11, 16) + '</div>' +
+        '<div class="job-meta">' + statusLabel + ' &middot; ' + ((job.created_at || '').substring(11, 16)) + '</div>' +
       '</div>' + qHtml;
-    item.addEventListener('click', function() { selectJob(job.job_id); });
+    item.addEventListener('click', (function(jid) { return function() { selectJob(jid); }; })(job.job_id));
     listEl.appendChild(item);
-  });
+  }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Handle SSE event for selected job
-// ═══════════════════════════════════════════════════════════════════════════
 function handleJobEvent(jobId, eventType, data) {
   if (jobId !== _selectedJobId) return;
   var d = (data && data.data !== undefined) ? data.data : (data || {});
   switch (eventType) {
-    case 'supervisor_plan':  onSupervisorPlan(d);   break;
-    case 'worker_start':     onWorkerStart(d);     break;
-    case 'worker_progress':  onWorkerProgress(d);  break;
-    case 'worker_done':      onWorkerDone(d);       break;
-    case 'worker_rejected':  onWorkerRejected(d);   break;
-    case 'quality_score':    onQualityScore(d);     break;
+    case 'supervisor_plan':    onSupervisorPlan(d);   break;
+    case 'worker_start':      onWorkerStart(d);     break;
+    case 'worker_progress':   onWorkerProgress(d);  break;
+    case 'worker_done':        onWorkerDone(d);       break;
+    case 'worker_rejected':    onWorkerRejected(d);   break;
+    case 'quality_score':      onQualityScore(d);     break;
     case 'self_healing':     onSelfHealing(d);      break;
-    case 'loop_warning':     onLoopWarning(d);      break;
+    case 'loop_warning':       onLoopWarning(d);      break;
     case 'human_intervention': onHumanIntervention(d); break;
     case 'final_result':     onFinalResult(d);      break;
     case 'error':            onOrchError(d);        break;
@@ -854,177 +899,149 @@ function handleJobEvent(jobId, eventType, data) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Event handlers
-// ═══════════════════════════════════════════════════════════════════════════
 function onSupervisorPlan(d) {
   hideLogEmpty();
-  appendLog('supervisor', '正在拆解任务...');
+  if (_orchHasStepId('phase_zhongshu')) updateStepStatus('phase_zhongshu', 'done');
+  if (_orchHasStepId('phase_menxia')) {
+    updateStepStatus('phase_menxia', 'active');
+    updateStepStatus('phase_menxia', 'done');
+  }
+  if (_orchHasStepId('phase_shangshu')) updateStepStatus('phase_shangshu', 'active');
+  appendLog('supervisor', '\u6b63\u5728\u62c6\u89e3\u4efb\u52a1...');
   if (d.tasks && d.tasks.length) {
-    d.tasks.forEach(function(t) {
+    for (var i = 0; i < d.tasks.length; i++) {
+      var t = d.tasks[i];
       var short = (t.assigned_agent || '').replace('_worker', '') || '?';
-      appendLog('supervisor', '计划: ' + t.description);
-      appendLog('system', '  → ' + short + ' (' + t.task_id + ')');
-    });
+      appendLog('supervisor', '\u8ba1\u5212: ' + t.description);
+      appendLog('system', '  \u2192 ' + short + ' (' + t.task_id + ')');
+    }
   }
 }
 
 function onWorkerStart(d) {
-  var key = normKey(d.agent);
-  updateStepStatus(key, 'active');
-  appendLog(key, '开始执行: ' + (d.task_description || d.description || ''));
+  var agentRaw = d.agent || '';
+  var tid = d.task_id || '';
+  if (agentRaw === 'supervisor' && tid === 'parallel_dispatch') {
+    if (_orchHasStepId('phase_shangshu')) updateStepStatus('phase_shangshu', 'done');
+    appendLog('supervisor', '\u5f00\u59cb\u5e76\u884c\u6d3e\u9063: ' + (d.task_description || ''));
+    return;
+  }
+  if (_orchHasStepId('phase_shangshu') && agentRaw !== 'supervisor') {
+    updateStepStatus('phase_shangshu', 'done');
+  }
+  var key = normKey(agentRaw);
+  if (key !== 'system' && key !== 'supervisor') updateStepStatus(key, 'active');
+  appendLog(key === 'system' ? 'system' : key, '\u5f00\u59cb\u6267\u884c: ' + (d.task_description || d.description || ''));
 }
 
 function onWorkerProgress(d) {
   var key = normKey(d.agent);
-  appendLog(key, d.message || '进行中...');
+  appendLog(key, d.message || '\u8fdb\u884c\u4e2d...');
 }
 
 function onWorkerDone(d) {
-  var key   = normKey(d.agent);
+  var key = normKey(d.agent);
   var score = parseFloat(d.quality_score || 0);
   updateStepStatus(key, 'done');
-  appendLog(key, '完成 (质量: ' + score.toFixed(1) + '/10)');
+  appendLog(key, '\u5b8c\u6210 (\u8d28\u91cf: ' + score.toFixed(1) + '/10)');
 }
 
 function onWorkerRejected(d) {
   var key = normKey(d.agent);
   updateStepStatus(key, 'fail');
-  appendLog(key, '被驳回: ' + (d.reason || '未知原因'));
+  appendLog(key, '\u88ab\u9a73\u56de: ' + (d.reason || '\u672a\u77e5\u539f\u56e0'));
 }
 
 function onSelfHealing(d) {
   updateStepStatus('self_heal', 'active');
-  appendLog('self_healer', '自修复 #' + (d.attempt || '?') + ': ' + (d.reason || ''));
+  appendLog('self_healer', '\u81ea\u4fee\u590d #' + (d.attempt || '?') + ': ' + (d.reason || ''));
 }
 
 function onQualityScore(d) {
   updateStepStatus('quality_eval', 'active');
-  appendLog('system', '整体质量: ' + parseFloat(d.score || 0).toFixed(1) + '/10 ' + (d.note || ''));
+  appendLog('system', '\u6574\u4f53\u8d28\u91cf: ' + parseFloat(d.score || 0).toFixed(1) + '/10 ' + (d.note || ''));
   updateStepStatus('quality_eval', 'done');
 }
 
 function onLoopWarning(d) {
-  appendLog('system', '⚠️ 循环警告: ' + (d.loop_count || 0) + ' 次');
+  appendLog('system', '\u5faa\u73af\u8b66\u544a: ' + (d.loop_count || 0) + ' \u6b21');
 }
 
 function onHumanIntervention(d) {
-  appendLog('system', '⚠️ 人工介入: ' + (d.message || ''));
+  appendLog('system', '\u4eba\u5de5\u4ecb\u5165: ' + (d.message || ''));
 }
 
 function onOrchError(d) {
-  appendLog('system', '错误: ' + (d.message || JSON.stringify(d)));
+  appendLog('system', '\u9519\u8bef: ' + (d.message || JSON.stringify(d)));
 }
 
 function openResultDrawer() {
-  if (!_orchFullSummary) {
-    return;
-  }
+  if (!_orchFullSummary) return;
   var pre = document.getElementById('orch-drawer-pre');
   var bd = document.getElementById('orch-drawer-backdrop');
   var dr = document.getElementById('orch-drawer');
-  if (pre) {
-    pre.textContent = _orchFullSummary;
-  }
-  if (bd) {
-    bd.classList.add('open');
-  }
-  if (dr) {
-    dr.classList.add('open');
-    dr.setAttribute('aria-hidden', 'false');
-  }
+  if (pre) pre.textContent = _orchFullSummary;
+  if (bd) bd.classList.add('open');
+  if (dr) { dr.classList.add('open'); dr.setAttribute('aria-hidden', 'false'); }
 }
 
 function closeResultDrawer() {
   var bd = document.getElementById('orch-drawer-backdrop');
   var dr = document.getElementById('orch-drawer');
-  if (bd) {
-    bd.classList.remove('open');
-  }
-  if (dr) {
-    dr.classList.remove('open');
-    dr.setAttribute('aria-hidden', 'true');
-  }
+  if (bd) bd.classList.remove('open');
+  if (dr) { dr.classList.remove('open'); dr.setAttribute('aria-hidden', 'true'); }
 }
 
 function copyDrawerResult() {
-  if (!_orchFullSummary) {
-    return;
-  }
+  if (!_orchFullSummary) return;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(_orchFullSummary).then(function() {
-      if (typeof toast === 'function') {
-        toast('已复制到剪贴板', 'info');
-      }
+      if (typeof toast === 'function') toast('\u5df2\u590d\u5236\u5230\u526a\u8d34\u677f', 'info');
     }).catch(function() {});
   }
 }
 
 function onFinalResult(d) {
+  if (_orchHasStepId('self_heal')) {
+    for (var si = 0; si < _steps.length; si++) {
+      if (_steps[si].id === 'self_heal' && (_steps[si].status === 'pending' || _steps[si].status === 'active')) {
+        updateStepStatus('self_heal', 'done');
+        break;
+      }
+    }
+  }
   updateStepStatus('final_result', 'active');
-  var score  = parseFloat(d.quality_score || 0);
+  var score = parseFloat(d.quality_score || 0);
   var passed = d.passed;
   var summary = d.summary || '';
   _orchFullSummary = summary;
+  var preview = summary.replace(/\s+/g, ' ').trim();
+  if (preview.length > 120) preview = preview.substring(0, 117) + '\u2026';
+  var ap = document.getElementById('artifact-preview');
+  var ac = document.getElementById('artifact-card');
+  var drawerPre = document.getElementById('orch-drawer-pre');
+  if (ap) ap.textContent = preview || '\uff08\u65e0\u6587\u672c\uff09';
+  if (ac) ac.classList.remove('disabled');
+  if (drawerPre) drawerPre.textContent = _orchFullSummary;
 
   var evalEmpty = document.getElementById('eval-empty');
-  if (evalEmpty) {
-    evalEmpty.style.display = 'none';
-  }
+  if (evalEmpty) evalEmpty.style.display = 'none';
 
-  var qRow  = document.getElementById('result-quality-row');
-  var bar   = document.getElementById('quality-bar');
+  var qRow = document.getElementById('resultquality-row');
+  var bar = document.getElementById('quality-bar');
   var label = document.getElementById('quality-score-label');
   var badge = document.getElementById('result-badge');
-  if (qRow) {
-    qRow.style.display = 'flex';
-  }
-  if (bar) {
-    bar.style.width = (score * 10) + '%';
-    bar.className = 'quality-bar' + (score >= 8 ? ' high' : '');
-  }
-  if (label) {
-    label.textContent = score.toFixed(1);
-    label.className = 'quality-score-label' + (score >= 8 ? ' high' : '');
-  }
-  if (badge) {
-    badge.className = 'result-badge ' + (passed ? 'pass' : 'fail');
-    badge.textContent = passed ? '✓ 通过' : '✗ 未达标';
-  }
+  if (qRow)  qRow.style.display = 'flex';
+  if (bar)  { bar.style.width = (score * 10) + '%'; bar.className = 'quality-bar' + (score >= 8 ? ' high' : ''); }
+  if (label) { label.textContent = score.toFixed(1); label.className = 'quality-score-label' + (score >= 8 ? ' high' : ''); }
+  if (badge) { badge.className = 'result-badge ' + (passed ? 'pass' : 'fail'); badge.textContent = passed ? '\u901a\u8fc7' : '\u672a\u8fbe\u6807'; }
 
   var evalMeta = document.getElementById('eval-meta');
   var elLoop = document.getElementById('eval-loop');
   var elHeal = document.getElementById('eval-heal');
-  if (evalMeta) {
-    evalMeta.classList.add('visible');
-  }
-  if (elLoop) {
-    if (d.loop_count !== undefined && d.loop_count !== null) {
-      elLoop.textContent = String(d.loop_count);
-    } else {
-      elLoop.textContent = '—';
-    }
-  }
-  if (elHeal) {
-    if (d.healing_attempts !== undefined && d.healing_attempts !== null) {
-      elHeal.textContent = String(d.healing_attempts);
-    } else {
-      elHeal.textContent = '—';
-    }
-  }
-
-  var preview = summary.replace(/\s+/g, ' ').trim();
-  if (preview.length > 140) {
-    preview = preview.slice(0, 137) + '…';
-  }
-  var ap = document.getElementById('artifact-preview');
-  if (ap) {
-    ap.textContent = preview || '（无文本）';
-  }
-  var ac = document.getElementById('artifact-card');
-  if (ac) {
-    ac.classList.remove('disabled');
-  }
+  if (evalMeta) evalMeta.classList.add('visible');
+  if (elLoop) elLoop.textContent = (d.loop_count !== undefined && d.loop_count !== null) ? String(d.loop_count) : '\u2014';
+  if (elHeal) elHeal.textContent = (d.healing_attempts !== undefined && d.healing_attempts !== null) ? String(d.healing_attempts) : '\u2014';
 
   updateStepStatus('final_result', 'done');
   onJobDone('done');
@@ -1033,20 +1050,19 @@ function onFinalResult(d) {
 
 function onJobDone(finalStatus) {
   var badge = document.getElementById('step-badge');
-  if (badge) badge.textContent = finalStatus === 'done' ? '已完成 ✓' : finalStatus === 'failed' ? '失败 ✗' : '已取消';
+  if (badge) badge.textContent = finalStatus === 'done' ? '\u5df2\u5b8c\u6210' : finalStatus === 'failed' ? '\u5931\u8d25' : '\u5df2\u53d6\u6d88';
   var cancelBtn = document.getElementById('cancel-btn');
   if (cancelBtn) cancelBtn.style.display = 'none';
-  // Mark all pending steps as fail
-  _steps.forEach(function(s) {
-    if (s.status === 'pending' || s.status === 'active') updateStepStatus(s.id, finalStatus === 'done' ? 'done' : 'fail');
-  });
+  for (var i = 0; i < _steps.length; i++) {
+    var s = _steps[i];
+    if (s.status === 'pending' || s.status === 'active') {
+      updateStepStatus(s.id, finalStatus === 'done' ? 'done' : 'fail');
+    }
+  }
   updateProgress();
   refreshJobList();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Cancel job
-// ═══════════════════════════════════════════════════════════════════════════
 function cancelSelectedJob() {
   if (!_selectedJobId) return;
   var jid = _selectedJobId;
@@ -1054,50 +1070,54 @@ function cancelSelectedJob() {
   fetch('/api/orchestrate/jobs/' + encodeURIComponent(jid), { method: 'DELETE' })
     .then(function(r) { return r.json(); })
     .then(function() {
-      toast('任务已取消', 'info');
-      appendLog('system', '任务已被取消');
+      toast('\u4efb\u52a1\u5df2\u53d6\u6d88', 'info');
+      appendLog('system', '\u4efb\u52a1\u5df2\u88ab\u53d6\u6d88');
+      clearResult();
       onJobDone('cancelled');
     })
-    .catch(function(err) { toast('取消失败: ' + err.message, 'error'); });
+    .catch(function(err) { toast('\u53d6\u6d88\u5931\u8d25: ' + err.message, 'error'); });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Helpers
-// ═══════════════════════════════════════════════════════════════════════════
 function normKey(agent) {
   if (!agent) return 'system';
   if (agent === 'search_worker' || agent === 'search') return 'search_worker';
-  if (agent === 'rag_worker'    || agent === 'rag')     return 'rag_worker';
-  if (agent === 'coder')                              return 'coder';
-  if (agent === 'self_healer')                       return 'self_healer';
+  if (agent === 'rag_worker' || agent === 'rag') return 'rag_worker';
+  if (agent === 'coder') return 'coder';
+  if (agent === 'self_healer') return 'self_healer';
+  if (agent === 'supervisor') return 'supervisor';
+  var s = String(agent);
+  var l = s.toLowerCase();
+  if (l.indexOf('worker_search') !== -1 || l.indexOf('agent_worker_search') !== -1) return 'search_worker';
+  if (l.indexOf('worker_rag') !== -1 || l.indexOf('agent_worker_rag') !== -1) return 'rag_worker';
+  if (l.indexOf('worker_coder') !== -1 || l.indexOf('agent_worker_coder') !== -1) return 'coder';
   return 'system';
 }
 
 function clearRightPanel() {
-  _steps = [];
-  _stepIdx = 0;
+  _steps = []; _stepIdx = 0;
   var ph = document.getElementById('progress-header');
   if (ph) ph.style.display = 'none';
   var cancelBtn = document.getElementById('cancel-btn');
   if (cancelBtn) cancelBtn.style.display = '';
-  clearLogs();
-  clearResult();
-  renderStepList();
+  clearLogs(); clearResult(); renderStepList();
 }
 
-function hideLogEmpty() { var el = document.getElementById('log-empty'); if (el) el.style.display = 'none'; }
-
-function resetTimeline() {
-  _steps = [];
-  renderStepList();
+function hideLogEmpty() {
+  var el = document.getElementById('log-empty');
+  if (el) el.style.display = 'none';
 }
+
+function resetTimeline() { _steps = []; renderStepList(); }
 
 function appendLog(agent, message) {
   var body = document.getElementById('log-body');
   if (!body) return;
   hideLogEmpty();
-  var now  = new Date();
-  var time = [now.getHours(), now.getMinutes(), now.getSeconds()].map(function(n) { return String(n).padStart(2,'0'); }).join(':');
+  var now = new Date();
+  var h = String(now.getHours()).padStart(2, '0');
+  var m = String(now.getMinutes()).padStart(2, '0');
+  var s = String(now.getSeconds()).padStart(2, '0');
+  var time = h + ':' + m + ':' + s;
   var entry = document.createElement('div');
   entry.className = 'log-entry';
   entry.innerHTML =
@@ -1106,74 +1126,40 @@ function appendLog(agent, message) {
     '<span class="log-msg">' + esc(message) + '</span>';
   body.appendChild(entry);
   body.scrollTop = body.scrollHeight;
-  // #region agent log
-  if (_orchLogLayoutProbeCount < 2) {
-    _orchLogLayoutProbeCount++;
-    var st = window.getComputedStyle(body);
-    fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '5df370' },
-      body: JSON.stringify({
-        sessionId: '5df370',
-        hypothesisId: 'H1',
-        location: 'orchestrate.html:appendLog',
-        message: 'log_body_layout',
-        data: {
-          probe: _orchLogLayoutProbeCount,
-          overflowY: st.overflowY,
-          overflowX: st.overflowX,
-          clientHeight: body.clientHeight,
-          scrollHeight: body.scrollHeight,
-          maxHeight: st.maxHeight,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(function() {});
-  }
-  // #endregion
 }
 
 function clearLogs() {
-  _orchLogLayoutProbeCount = 0;
   var body = document.getElementById('log-body');
-  if (body) body.innerHTML = '<div class="orch-empty" id="log-empty"><svg viewBox="0 0 24 24" width="24" height="24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>暂无日志</div>';
+  if (body) body.innerHTML = '<div class="orch-empty" id="log-empty"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>\u6682\u65e0\u65e5\u5fd7</div>';
 }
 
 function clearResult() {
   _orchFullSummary = '';
   closeResultDrawer();
   var pre = document.getElementById('orch-drawer-pre');
-  if (pre) {
-    pre.textContent = '';
-  }
+  if (pre) pre.textContent = '';
   var evalEmpty = document.getElementById('eval-empty');
-  if (evalEmpty) {
-    evalEmpty.style.display = '';
-  }
+  if (evalEmpty) evalEmpty.style.display = '';
   var evalMeta = document.getElementById('eval-meta');
-  if (evalMeta) {
-    evalMeta.classList.remove('visible');
-  }
+  if (evalMeta) evalMeta.classList.remove('visible');
   var elLoop = document.getElementById('eval-loop');
   var elHeal = document.getElementById('eval-heal');
-  if (elLoop) {
-    elLoop.textContent = '—';
-  }
-  if (elHeal) {
-    elHeal.textContent = '—';
-  }
-  var qRow = document.getElementById('result-quality-row');
-  if (qRow) {
-    qRow.style.display = 'none';
-  }
+  if (elLoop) elLoop.innerHTML = '&#8212;';
+  if (elHeal) elHeal.innerHTML = '&#8212;';
+  var qRow = document.getElementById('resultquality-row');
+  if (qRow) qRow.style.display = 'none';
+  var bar = document.getElementById('quality-bar');
+  if (bar) { bar.style.width = '0%'; bar.className = 'quality-bar'; }
+  var qLabel = document.getElementById('quality-score-label');
+  if (qLabel) { qLabel.textContent = '0.0'; qLabel.className = 'quality-score-label'; }
+  var rb = document.getElementById('result-badge');
+  if (rb) { rb.className = 'result-badge'; rb.textContent = ''; }
+  var at = document.getElementById('artifact-title');
+  if (at) at.textContent = '\u7f16\u6392\u6c47\u603b\u62a5\u544a';
   var ap = document.getElementById('artifact-preview');
-  if (ap) {
-    ap.textContent = '等待任务完成…';
-  }
+  if (ap) ap.textContent = '\u7b49\u5f85\u4efb\u52a1\u5b8c\u6210\u2026';
   var ac = document.getElementById('artifact-card');
-  if (ac) {
-    ac.classList.add('disabled');
-  }
+  if (ac) ac.classList.add('disabled');
 }
 
 function clearInput() {
@@ -1181,10 +1167,16 @@ function clearInput() {
   if (req) req.value = '';
 }
 
-function esc(s) {
-  if (s === null || s === undefined) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+// 内联 onclick 需全局函数（IIFE 内定义不会挂到 window）
+window.startNewJob = startNewJob;
+window.clearInput = clearInput;
+window.cancelSelectedJob = cancelSelectedJob;
+window.toggleTimeline = toggleTimeline;
+window.openResultDrawer = openResultDrawer;
+window.closeResultDrawer = closeResultDrawer;
+window.copyDrawerResult = copyDrawerResult;
+
+})();
 </script>
 </body>
 </html>

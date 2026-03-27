@@ -7,6 +7,96 @@
   <script src="/lib/shared.js"></script>
   <style>
     body { background: var(--bg); }
+
+    /* ── 工具面板样式（复用对话页设计语言） ────────────────────── */
+    .qa-tool-block { border-radius: var(--radius-md); margin-bottom: 8px; overflow: hidden; }
+    .qa-tool-block[open] .qa-toggle { transform: rotate(180deg); }
+    .qa-tool-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; cursor: pointer;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+    .qa-label {
+      display: flex; align-items: center; gap: 5px;
+      font-family: var(--font-mono); font-size: 11px; color: #a78bfa;
+    }
+    .qa-label svg { width: 10px; height: 10px; stroke: #a78bfa; fill: none; stroke-width: 2; }
+    .qa-toggle { font-size: 10px; color: var(--muted); transition: transform 200ms; }
+    .qa-tool-body { padding: 8px 10px; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+    .tool-entry { padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; background: var(--surface); border: 1px solid var(--border); }
+    .tool-entry:last-child { margin-bottom: 0; }
+    .tool-entry-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+    .tool-entry-name { font-size: 11px; font-family: var(--font-mono); color: #a78bfa; }
+    .tool-entry-data { font-size: 10px; font-family: var(--font-mono); color: var(--muted); white-space: pre-wrap; word-break: break-all; max-height: 44px; overflow: hidden; line-height: 1.4; }
+    .tool-entry-result { font-size: 10px; font-family: var(--font-mono); color: #4ade80; white-space: pre-wrap; word-break: break-all; max-height: 44px; overflow: hidden; line-height: 1.4; margin-top: 4px; border-top: 1px dashed var(--border); padding-top: 4px; }
+
+    /* ── 会话展开卡片 ─────────────────────────────────────────── */
+    .session-expand-panel {
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      margin-top: -1px;
+      animation: slideDown 200ms ease both;
+    }
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .session-expand-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .session-expand-title {
+      font-size: 12px; font-weight: 500; color: var(--text);
+      font-family: var(--font-sans);
+    }
+    .session-expand-body { max-height: 420px; overflow-y: auto; padding: 14px 16px; }
+    .session-expand-body::-webkit-scrollbar { width: 4px; }
+    .session-expand-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .turn-block { margin-bottom: 16px; }
+    .turn-block:last-child { margin-bottom: 0; }
+    .turn-user {
+      display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px;
+    }
+    .turn-avatar-u {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: rgba(139,0,0,0.2); border: 1px solid rgba(139,0,0,0.3);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; color: #c0392b; flex-shrink: 0;
+    }
+    .turn-bubble-u {
+      background: rgba(139,0,0,0.12); border: 1px solid rgba(139,0,0,0.25);
+      border-radius: 10px 10px 10px 2px;
+      padding: 7px 12px; font-size: 13px; color: var(--text);
+      line-height: 1.5; max-width: 88%;
+    }
+    .turn-assistant {
+      display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px;
+    }
+    .turn-avatar-a {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: rgba(167,139,250,0.15); border: 1px solid rgba(167,139,250,0.25);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; color: #a78bfa; flex-shrink: 0;
+    }
+    .turn-bubble-a {
+      background: var(--elevated); border: 1px solid var(--border-h);
+      border-radius: 10px 10px 2px 10px;
+      padding: 7px 12px; font-size: 13px; color: var(--text);
+      line-height: 1.6; max-width: 88%;
+    }
+    .turn-tools { margin-left: 34px; }
+    .turn-empty { font-family: var(--font-mono); font-size: 11px; color: var(--muted); padding: 4px 0 8px 34px; }
+    .session-expand-footer {
+      padding: 8px 16px; border-top: 1px solid var(--border);
+      display: flex; gap: 8px;
+    }
+    .btn-sm { padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; border: 1px solid var(--border); background: var(--elevated); color: var(--muted); transition: all 150ms; font-family: var(--font-sans); }
+    .btn-sm:hover { border-color: var(--border-h); color: var(--text); }
+    .btn-sm-danger:hover { background: rgba(139,0,0,0.1); border-color: rgba(139,0,0,0.3); color: #c0392b; }
   </style>
 </head>
 <body class="glass-theme">
@@ -17,11 +107,11 @@
 </div>
 
 <script>
-// ── 会话页内容模板 ────────────────────────────────────────────
+// ── 内容模板 ──────────────────────────────────────────────────
 var SESSIONS_CONTENT = [
   '<div class="sessions-list">',
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">',
-      '<h2 style="font-size:15px;font-weight:500;color:var(--text)">会话列表</h2>',
+      '<h2 style="font-size:15px;font-weight:500;color:var(--text)">会话历史</h2>',
       '<button class="btn" onclick="chatResetSession()" style="background:var(--elevated);border-color:var(--border-h);color:var(--text);padding:8px 16px;border-radius:8px">+ 新建会话</button>',
     '</div>',
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">',
@@ -36,16 +126,27 @@ var SESSIONS_CONTENT = [
   '</div>'
 ].join('');
 
-// ── 会话页 show ───────────────────────────────────────────────
+// ── 页面 show ─────────────────────────────────────────────────
+var _sessionsPageVisible = false;
+
 function sessionsOnShow(savedState) {
+  _sessionsPageVisible = true;
   if (savedState && savedState.allSessions) {
     window._allSessions = savedState.allSessions;
     filterSessions();
   }
   loadSessions();
+  // 监听页面可见性：切回时自动刷新
+  document.addEventListener('visibilitychange', onSessionsVisibilityChange);
 }
 
-// ── 会话页 save ──────────────────────────────────────────────
+function onSessionsVisibilityChange() {
+  if (document.visibilityState === 'visible' && _sessionsPageVisible) {
+    loadSessions();
+  }
+}
+
+// ── 页面 save ─────────────────────────────────────────────────
 function sessionsOnSave() {
   return { allSessions: window._allSessions };
 }
@@ -56,10 +157,9 @@ registerSPA('/sessions', SESSIONS_CONTENT, sessionsOnShow, sessionsOnSave);
 // ── 页面初始化 ────────────────────────────────────────────────
 injectStyles();
 initPage('/sessions');
+initSPA('/sessions');
 
 var _allSessions = [];
-
-initSPA('/sessions');
 
 function loadSessions() {
   fetch('/api/sessions').then(function(r) { return r.ok ? r.json() : null; }).then(function(sessions) {
@@ -103,43 +203,170 @@ function renderSessions(sessions) {
   container.innerHTML = sessions.map(function(s) {
     var ts = s.updated_at ? new Date(s.updated_at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}) : '--';
     var title = s.title || ('会话 ' + s.thread_id.slice(0, 8));
-    return '<div class="session-card">' +
-      '<div class="session-card-info">' +
-        '<div class="session-card-title">' + esc(title) + '</div>' +
-        '<div class="session-card-meta">ID: ' + s.thread_id.slice(0, 12) + '... | ' + s.message_count + ' 条消息 | ' + ts + '</div>' +
+    var expanded = window._expandedSession === s.thread_id;
+    return '<div class="session-item" id="sess-' + esc(s.thread_id) + '">' +
+      '<div class="session-card" onclick="toggleSession(\'' + esc(s.thread_id) + '\')" style="cursor:pointer">' +
+        '<div class="session-card-info">' +
+          '<div class="session-card-title">' + esc(title) + '</div>' +
+          '<div class="session-card-meta">ID: ' + s.thread_id.slice(0, 12) + '... | ' + (s.message_count || 0) + ' 条消息 | ' + ts + '</div>' +
+        '</div>' +
+        '<div class="session-card-actions" onclick="event.stopPropagation()">' +
+          '<button class="session-btn" onclick="chatJumpSession(\'' + esc(s.thread_id) + '\')" title="打开会话"><svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>' +
+          '<button class="session-btn" onclick="sessionExport(\'' + esc(s.thread_id) + '\')" title="导出"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>' +
+          '<button class="session-btn delete" onclick="chatDelSession(\'' + esc(s.thread_id) + '\')" title="删除"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>' +
+        '</div>' +
       '</div>' +
-      '<div class="session-card-actions">' +
-        '<button class="session-btn" onclick="chatJumpSession(\'' + esc(s.thread_id) + '\')" title="打开会话"><svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>' +
-        '<button class="session-btn" onclick="sessionExport(\'' + esc(s.thread_id) + '\')" title="导出"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>' +
-        '<button class="session-btn delete" onclick="chatDelSession(\'' + esc(s.thread_id) + '\')" title="删除"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>' +
-      '</div>' +
+      (expanded ? '<div class="session-expand-panel" id="expand-' + esc(s.thread_id) + '"></div>' : '') +
     '</div>';
   }).join('');
+
+  // 如果有展开的，加载其详情
+  if (window._expandedSession) {
+    loadSessionDetail(window._expandedSession);
+  }
+}
+
+window._expandedSession = null;
+window._sessionDetailCache = {};
+
+function toggleSession(threadId) {
+  if (window._expandedSession === threadId) {
+    window._expandedSession = null;
+  } else {
+    window._expandedSession = threadId;
+    loadSessionDetail(threadId);
+  }
+  filterSessions();
+}
+
+function loadSessionDetail(threadId) {
+  var panel = document.getElementById('expand-' + threadId);
+  if (!panel) return;
+  panel.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-family:var(--font-mono);font-size:12px">正在加载对话详情...</div>';
+
+  fetch('/api/session/' + threadId + '/detail').then(function(r) {
+    return r.ok ? r.json() : null;
+  }).then(function(data) {
+    if (!data) return;
+    window._sessionDetailCache[threadId] = data;
+    renderSessionDetail(threadId, data);
+  }).catch(function() {
+    panel.innerHTML = '<div style="padding:16px;color:#f87171;font-size:12px">加载失败</div>';
+  });
+}
+
+function renderSessionDetail(threadId, data) {
+  var panel = document.getElementById('expand-' + threadId);
+  if (!panel) return;
+
+  var turns = data.turns || [];
+  var toolEventsMap = {};
+  (data.tool_events || []).forEach(function(te) {
+    var key = te.turn;
+    if (!toolEventsMap[key]) toolEventsMap[key] = te.tools || [];
+    else toolEventsMap[key] = toolEventsMap[key].concat(te.tools || []);
+  });
+
+  if (!turns.length) {
+    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:12px;font-family:var(--font-mono)">暂无对话内容</div>';
+    return;
+  }
+
+  var bodyHtml = turns.map(function(turn, idx) {
+    var tools = toolEventsMap[idx] || turn.tools || [];
+    var toolsHtml = '';
+    if (tools.length) {
+      var toolCards = tools.map(function(t) {
+        var inputShort = truncate(String(t.input || ''), 120);
+        var resultShort = truncate(String(t.result || ''), 120);
+        return '<div class="tool-entry">' +
+          '<div class="tool-entry-header">' +
+            '<span class="tool-entry-name">' + esc(t.name || t.tool_name || '?') + '</span>' +
+            '<span style="font-size:10px;font-family:var(--font-mono);color:var(--muted)">' +
+              (t.type === 'tool_start' ? '开始' : '结果') + '</span>' +
+          '</div>' +
+          (inputShort ? '<div class="tool-entry-data" title="' + esc(String(t.input || '')) + '">' + esc(inputShort) + '</div>' : '') +
+          (resultShort ? '<div class="tool-entry-result" title="' + esc(String(t.result || '')) + '">' + esc(resultShort) + '</div>' : '') +
+        '</div>';
+      }).join('');
+      toolsHtml = '<div class="turn-tools">' +
+        '<details class="qa-tool-block" open>' +
+          '<summary class="qa-tool-header" style="cursor:pointer">' +
+            '<span class="qa-label"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span>工具调用 (' + tools.length + ')</span></span>' +
+            '<span class="qa-toggle">&#9660;</span>' +
+          '</summary>' +
+          '<div class="qa-tool-body">' + toolCards + '</div>' +
+        '</details>' +
+      '</div>';
+    }
+
+    return '<div class="turn-block">' +
+      '<div class="turn-user">' +
+        '<div class="turn-avatar-u">U</div>' +
+        '<div class="turn-bubble-u">' + esc(turn.user || '') + '</div>' +
+      '</div>' +
+      '<div class="turn-assistant">' +
+        '<div class="turn-avatar-a">A</div>' +
+        '<div class="turn-bubble-a">' + esc(turn.assistant || '') + '</div>' +
+      '</div>' +
+      toolsHtml +
+    '</div>';
+  }).join('');
+
+  panel.innerHTML =
+    '<div class="session-expand-header">' +
+      '<span class="session-expand-title">' + turns.length + ' 轮对话</span>' +
+    '</div>' +
+    '<div class="session-expand-body">' + bodyHtml + '</div>' +
+    '<div class="session-expand-footer">' +
+      '<button class="btn-sm" onclick="chatJumpSession(\'' + esc(threadId) + '\')">在对话页打开</button>' +
+      '<button class="btn-sm btn-sm-danger" onclick="chatDelSession(\'' + esc(threadId) + '\')">删除会话</button>' +
+    '</div>';
+}
+
+function truncate(s, max) {
+  s = String(s);
+  return s.length > max ? s.slice(0, max) + '…' : s;
 }
 
 function chatJumpSession(tid) {
   G.threadId = tid;
   localStorage.setItem('rag_tid', tid);
-  // 切换到对话页（不刷新），恢复对应会话状态
   navigateTo('/');
 }
 
 function sessionExport(tid) {
+  var cache = window._sessionDetailCache[tid];
+  if (cache && cache.turns) {
+    exportFromCache(cache, tid);
+    return;
+  }
   fetch('/api/session/' + tid).then(function(r) { return r.ok ? r.json() : null; }).then(function(data) {
     if (!data || !data.messages) { toast('获取会话失败', 'error'); return; }
-    var lines = ['# 会话记录', '---', ''];
-    data.messages.forEach(function(m) {
-      var role = m.type === 'HumanMessage' ? '用户' : '助手';
-      lines.push('**' + role + ':** ' + m.content);
-      lines.push('');
-    });
-    var blob = new Blob(['\ufeff' + lines.join('\n')], {type: 'text/markdown;charset=utf-8'});
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = '会话_' + tid.slice(0, 8) + '_' + new Date().toLocaleString('zh-CN').replace(/[\/:]/g, '-') + '.md';
-    a.click();
-    toast('导出成功');
+    exportFromCache(data, tid);
   }).catch(function() { toast('导出失败', 'error'); });
+}
+
+function exportFromCache(data, tid) {
+  var turns = data.turns || [];
+  var lines = ['# 会话记录', '---', ''];
+  turns.forEach(function(turn, i) {
+    lines.push('## 第 ' + (i + 1) + ' 轮');
+    lines.push('**用户:** ' + (turn.user || ''));
+    lines.push('');
+    lines.push('**助手:** ' + (turn.assistant || ''));
+    lines.push('');
+    (turn.tools || []).forEach(function(t) {
+      lines.push('> 工具 `' + (t.name || '') + '`: ' + truncate(String(t.result || ''), 200));
+    });
+    lines.push('');
+  });
+  var blob = new Blob(['\ufeff' + lines.join('\n')], {type: 'text/markdown;charset=utf-8'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '会话_' + tid.slice(0, 8) + '_' + new Date().toLocaleString('zh-CN').replace(/[\/:]/g, '-') + '.md';
+  a.click();
+  toast('导出成功');
 }
 
 function chatDelSession(tid) {
@@ -150,6 +377,7 @@ function chatDelSession(tid) {
     body: JSON.stringify({thread_id: tid})
   }).then(function() {
     toast('会话已删除');
+    if (window._expandedSession === tid) window._expandedSession = null;
     loadSessions();
   }).catch(function() { toast('删除失败', 'error'); });
 }

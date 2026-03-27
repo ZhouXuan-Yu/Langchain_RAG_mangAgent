@@ -38,6 +38,15 @@ pypdf>=4.0.0
 pdfplumber>=0.11.0
 pandas>=2.0.0
 
+# ── OCR（掃描 PDF / 純圖片 PDF，知識庫）────────────────────────────────────────
+# EasyOCR：pip 即可，首次執行會下載模型；依賴 PyTorch（體積較大）
+easyocr>=1.7.0
+# 可選：Paddle 全家桶（與 easyocr 二選一亦可）
+paddlepaddle>=3.0.0
+# 鎖定 2.x：3.x 的 predict API 與下方程式不同
+paddleocr>=2.9.0,<3.0.0
+opencv-python-headless>=4.8.0
+
 # ── Web Server ─────────────────────────────────────────────────────────────────
 fastapi>=0.115.0
 uvicorn[standard]>=0.34.0
