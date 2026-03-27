@@ -1,5 +1,6 @@
 """Search Worker — Tavily 搜索 + Playwright 抓取，带置信度标记."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -43,7 +44,9 @@ class SearchWorker:
 
         # ── Step 1: 执行 Tavily 搜索 ────────────────────────────────
         try:
-            search_result = web_search.invoke({"query": description})
+            search_result = await asyncio.to_thread(
+                web_search.invoke, {"query": description}
+            )
 
             if progress_callback:
                 await progress_callback({

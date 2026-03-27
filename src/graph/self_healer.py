@@ -143,7 +143,7 @@ async def _llm_self_heal(
 修复尝试 #{attempt}:
 """
 
-    response = await llm.invoke([
+    response = await llm.ainvoke([
         SystemMessage(content="你是一个专业的任务自修复助手，擅长分析错误并提供修复方案。"),
         HumanMessage(content=prompt),
     ])

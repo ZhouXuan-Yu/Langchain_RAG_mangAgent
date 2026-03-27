@@ -1,10 +1,12 @@
-"""FastAPI 主服务器 — 静态文件服务 + CORS + 自动打开浏览器."""
+# -*- coding: utf-8 -*-
+"""FastAPI main server."""
 
+import atexit
 import logging
-import os
 import subprocess
 import sys
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -20,7 +22,6 @@ from src.server.api import router
 
 
 def _open_browser(url: str) -> None:
-    """跨平台打开浏览器."""
     try:
         if sys.platform == "win32":
             subprocess.Popen(["cmd", "/c", "start", "", url], shell=False, detached=True)
@@ -30,18 +31,71 @@ def _open_browser(url: str) -> None:
     except Exception:
         pass
 
-# ── 日志配置 ───────────────────────────────────────────────────────────────────
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# ── FastAPI 应用 ───────────────────────────────────────────────────────────────
+
+# ── Resource cleanup ──────────────────────────────────────────────────────────
+def _cleanup_resources():
+    """Stop all background threads/processes so uvicorn can exit gracefully."""
+    logger.info("[cleanup] stopping background resources...")
+
+    # 1. TaskScheduler ThreadPoolExecutor
+    try:
+        from src.server.task_scheduler import get_scheduler
+        sched = get_scheduler()
+        sched._executor.shutdown(wait=False, cancel_futures=True)
+        logger.info("[cleanup] TaskScheduler executor stopped")
+    except Exception as e:
+        logger.warning(f"[cleanup] TaskScheduler: {e}")
+
+    # 2. Playwright browser process
+    try:
+        from src.tools.browser_tools import _browser_pool, _pool_lock
+        with _pool_lock:
+            for key, pool in list(_browser_pool.items()):
+                try:
+                    pool["browser"].close()
+                    pool["playwright"].stop()
+                    logger.info(f"[cleanup] browser {key} closed")
+                except Exception:
+                    pass
+            _browser_pool.clear()
+    except Exception as e:
+        logger.warning(f"[cleanup] browser pool: {e}")
+
+    # 3. ChromaDB singleton reference
+    try:
+        from src.memory.chroma_store import ChromaMemoryStore
+        ChromaMemoryStore._instance = None
+        logger.info("[cleanup] ChromaMemoryStore cleared")
+    except Exception as e:
+        logger.warning(f"[cleanup] ChromaMemoryStore: {e}")
+
+    logger.info("[cleanup] done")
+
+
+atexit.register(_cleanup_resources)
+
+
+# ── FastAPI app ────────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("[lifespan] server starting...")
+    yield
+    logger.info("[lifespan] server shutting down...")
+    _cleanup_resources()
+
+
 app = FastAPI(
     title="LangGraph RAG Agent",
-    description="DeepSeek + ChromaDB + LangGraph — 带 Web UI 的 AI 智能体",
+    description="DeepSeek + ChromaDB + LangGraph",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -52,7 +106,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── 健康检查 & 根路径（必须在 mount 之前定义，mount 会拦截所有未匹配路径）───
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -60,14 +114,12 @@ async def health():
 
 @app.get("/")
 async def root():
-    """返回前端主页面（对话主页）."""
     index_path = PROJECT_ROOT / "pages" / "index.html"
     if index_path.exists():
         return Response(index_path.read_text(encoding="utf-8"), media_type="text/html")
     return {"message": "pages/index.html not found"}
 
 
-# ── 各功能页面路由（必须在 mount 之前，StaticFiles html=True 不会自动加 .html）──
 _PAGE_ROUTES = [
     "tasks", "kb", "agents", "costs", "sessions", "settings", "orchestrate",
 ]
@@ -91,28 +143,22 @@ for _name in _PAGE_ROUTES:
     )
 
 
-# 挂载 API 路由
 app.include_router(router)
 
-# 挂载静态文件（pages 目录，每个功能对应一个独立 HTML 页面）
-# 注意：此 mount 放在最后，兜底处理 pages 下的静态资源
 static_root = PROJECT_ROOT / "pages"
 if static_root.exists():
     app.mount("/", StaticFiles(directory=str(static_root), html=True), name="pages")
 
 
-# ── 浏览器自动打开 ────────────────────────────────────────────────────────────
 def _open_browser_server():
     _open_browser(f"http://localhost:{APP_PORT}")
 
 
 if __name__ == "__main__":
-    logger.info("启动 LangGraph RAG Agent Web UI (端口 %s)...", APP_PORT)
+    logger.info("Starting LangGraph RAG Agent (port %s)...", APP_PORT)
     threading.Timer(1.0, _open_browser_server).start()
     uvicorn.run(
         "src.server.main_server:app",
         host="localhost",
         port=APP_PORT,
-        reload=True,
-        reload_dirs=[str(PROJECT_ROOT)],
     )

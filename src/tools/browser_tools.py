@@ -140,8 +140,11 @@ def web_search(query: str) -> str:
     适用于：查询最新技术、库版本更新、具体 Bug 解决方案等。
     当用户询问 2025-2026 年的最新技术时，必须使用此工具。
     """
-    if not query or not query.strip():
-        return "[系统] 搜索关键词为空，已跳过搜索。"
+    from src.middleware.input_guard import validate_search_query
+
+    guard_err = validate_search_query(query or "")
+    if guard_err:
+        return guard_err
 
     try:
         client = _get_tavily_client()

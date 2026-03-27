@@ -126,7 +126,7 @@ class CoderWorker:
 
 请直接输出代码，不要解释。"""
 
-        response = await llm.invoke([
+        response = await llm.ainvoke([
             SystemMessage(content="你是一个专业的 Python 开发者，擅长编写高质量代码。"),
             HumanMessage(content=prompt),
         ])

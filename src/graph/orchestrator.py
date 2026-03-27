@@ -253,10 +253,10 @@ class CrayfishOrchestrator:
 
         try:
             llm = init_deepseek_llm(temperature=0.3, streaming=False)
-            response = await llm.invoke([
-                SystemMessage(content="你是一个专业的任务规划专家，擅长将复杂需求拆解为可执行的子任务。"),
-                HumanMessage(content=prompt),
-            ])
+        response = await llm.ainvoke([
+            SystemMessage(content="你是一个专业的任务规划专家，擅长将复杂需求拆解为可执行的子任务。"),
+            HumanMessage(content=prompt),
+        ])
 
             content = response.content if hasattr(response, "content") else str(response)
 
@@ -537,15 +537,15 @@ class CrayfishOrchestrator:
             return
         try:
             result = callback(data)
-            # callback 返回的是 async generator（用于 SSE）
             if hasattr(result, "__anext__"):
                 async for chunk in result:
-                    pass  # generator yields SSE-formatted strings
+                    pass
             else:
-                # 普通 awaitable
                 await result
+        except asyncio.CancelledError:
+            raise  # 取消必须传播
         except Exception as e:
-            logger.error(f"[orchestrator] emit failed: {e}")
+            logger.warning(f"[orchestrator] _emit: callback raised {e}", exc_info=True)
 
 
 # ── 全局单例 ──────────────────────────────────────────────────────────────

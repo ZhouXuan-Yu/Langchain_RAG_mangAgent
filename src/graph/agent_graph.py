@@ -26,12 +26,11 @@ from src.graph.nodes import (
 from src.graph.router import route_decision, after_retrieve_or_web
 from src.memory.chroma_store import ChromaMemoryStore
 from src.memory.sqlite_store import get_sqlite_checkpointer
-from src.tools.memory_tools import memory_search, save_memory
+from src.tools.memory_tools import memory_search, save_memory, knowledge_base_search
 from src.tools.browser_tools import web_search, browse_page
 from src.tools.calc_tools import calculator
 from src.tools.multimodal_tools import process_image
-from src.middleware.pii_redactor import before_model as pii_before_model
-from src.middleware.input_guard import before_tool as guard_before_tool
+from src.middleware.pii_redactor import pii_pre_model_hook
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ def build_agent_graph(
         编译后的 StateGraph
     """
     # 定义所有工具
-    tools = [memory_search, save_memory, web_search, browse_page, calculator, process_image]
+    tools = [memory_search, save_memory, knowledge_base_search, web_search, browse_page, calculator, process_image]
     llm_with_tools = llm.bind_tools(tools)
 
     # 注入 LLM 到 nodes 模块（传两个版本：裸 LLM + 带工具的 LLM）
@@ -150,21 +149,15 @@ def build_react_agent(
 
     tools = [web_search, browse_page, calculator, memory_search, save_memory, process_image]
 
-    # 应用中间件
-    interceptors = []
-    if enable_middleware:
-        interceptors = [
-            pii_before_model,
-            guard_before_tool,
-        ]
+    # pre_model_hook 同时做 PII 脱敏 + 工具参数验证
+    pre_hook = pii_pre_model_hook if enable_middleware else None
 
     agent = create_react_agent(
         llm,
         tools=tools,
         checkpointer=checkpointer,
-        state_modifier=system_prompt if system_prompt else None,
-        before_model=interceptors if interceptors else None,
-        before_tool=guard_before_tool,
+        prompt=system_prompt or None,
+        pre_model_hook=pre_hook,
     )
 
     logger.info("[react_agent] compiled successfully")

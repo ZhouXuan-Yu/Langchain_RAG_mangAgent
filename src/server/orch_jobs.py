@@ -173,6 +173,10 @@ async def _run_orchestrator_job(job: BackgroundJob) -> None:
 
     except Exception as e:
         job.set_failed(str(e))
+        job.add_event("error", {
+            "type": "error",
+            "message": f"[编排失败] {e}",
+        })
         logger.error(f"[orch_jobs] job {job.job_id} failed: {e}", exc_info=True)
 
 

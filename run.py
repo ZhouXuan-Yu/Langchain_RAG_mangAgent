@@ -54,8 +54,6 @@ def main():
     (data_dir / "checkpointer").mkdir(parents=True, exist_ok=True)
 
     # 3. 固定端口（与 main_server / .env 中 APP_PORT 一致）
-    # 注意：子进程若使用 stdout=PIPE 且主进程在等待循环中不读管道，uvicorn 日志会填满缓冲区，
-    # 在 Windows 上会导致子进程阻塞、端口永不监听 —— 因此必须继承标准输出或使用 DEVNULL。
     port = int(os.getenv("APP_PORT", "8000"))
     if _is_port_open("localhost", port):
         print(
@@ -64,7 +62,7 @@ def main():
         )
         return
 
-    # 4. 启动后端（子进程日志直接打印到当前终端，避免 PIPE 死锁）
+    # 4. 启动后端（stdout=PIPE 时需后台线程实时读取，否则管道满了会阻塞子进程）
     print(f"[INFO] 正在启动后端服务 (FastAPI + LangGraph) 端口 {port} ...")
     server = subprocess.Popen(
         [
@@ -75,32 +73,47 @@ def main():
         ],
         cwd=PROJECT_ROOT,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
 
-    # 5. 等待服务就绪
-    # 说明：uvicorn 主进程在 Windows 上启动子进程运行 HTTP 服务。
-    # 当子进程崩溃（如 import 错误），主进程保持 alive 但端口无监听。
-    # 因此用 /health HTTP 检查确认，而非只看端口是否 open。
     import urllib.request
     import urllib.error
+    import threading
 
+    # 后台线程：实时打印子进程输出（防止 PIPE 缓冲阻塞）
+    def _read_stdout(proc, outfile):
+        try:
+            for line in iter(proc.stdout.readline, b""):
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace")
+                outfile.write(text)
+                outfile.flush()
+        except Exception:
+            pass
+
+    output_lines = []
+    reader = threading.Thread(target=_read_stdout, args=(server, sys.stdout), daemon=True)
+    reader.start()
+
+    # 5. 等待服务就绪
     health_url = f"http://localhost:{port}/health"
     print(f"[INFO] 等待服务启动 (端口 {port})...")
 
     for i in range(60):
         time.sleep(0.5)
         if server.poll() is not None:
-            print(f"[ERROR] 后端进程异常退出 (exit {server.returncode})，请查看上方 uvicorn 报错。")
+            print(f"\n[ERROR] 后端进程异常退出 (exit {server.returncode})，请查看上方 uvicorn 报错。")
             return
         try:
-            # 用 /health 确认服务真正在响应，而非端口被旧进程占着
             req = urllib.request.Request(health_url, headers={"User-Agent": "python"})
             with urllib.request.urlopen(req, timeout=2) as resp:
                 if resp.status == 200:
                     break
         except (urllib.error.URLError, urllib.error.HTTPError, Exception):
             pass
-        if i % 10 == 0:  # 每 5 秒才打印一次，避免刷屏
+        if i % 10 == 0:
             print(f"[INFO]  等待中... ({i+1}/60)")
     else:
         print("[ERROR] 服务启动超时（约 30 秒），uvicorn 可能因 import 错误无法启动，请查看上方报错。")
@@ -113,15 +126,16 @@ def main():
     print(f"[INFO] 服务已就绪，正在打开浏览器: {url}")
     _open_browser(url)
 
-    # 7. 阻塞直到子进程结束（日志已由子进程继承的 stdout 输出）
+    # 7. 等待子进程退出（后台线程负责打印输出）
     print("[INFO] 服务运行中，按 Ctrl+C 停止所有服务\n")
     try:
         server.wait()
     except KeyboardInterrupt:
-        print("\n[INFO] 正在关闭服务...")
-        server.terminate()
+        print("\n[INFO] 收到 Ctrl+C，正在强制关闭...")
+        server.kill()
         server.wait()
-        print("[INFO] 服务已关闭。")
+    print("[INFO] 服务已关闭。")
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

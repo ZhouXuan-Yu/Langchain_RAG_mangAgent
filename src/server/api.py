@@ -28,6 +28,7 @@ from src.server.models import (
     MemorySaveRequest,
     ModelConfigRequest,
     ModelSwitchRequest,
+    OrchestrateRequest,
     SessionSummary,
     SessionUpdateRequest,
     TaskBatchCreateRequest,
@@ -82,14 +83,14 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         agent = await get_agent(model)
         config = {"configurable": {"thread_id": req.thread_id}}
 
-        seen_tool_events: set[str] = set()  # 去重
+        # on_tool_start / on_tool_end 对同一 run_id 各应推送一次；此前共用 dedup 导致
+        # tool_result 永远被跳过，前端卡片一直停在「等待结果」。
+        seen_tool_starts: set[str] = set()
+        seen_tool_ends: set[str] = set()
 
-        def dedup_tool(name: str, args_str: str) -> bool:
-            key = f"{name}:{args_str[:80]}"
-            if key in seen_tool_events:
-                return False
-            seen_tool_events.add(key)
-            return True
+        def _event_run_id(ev: dict) -> str:
+            rid = ev.get("run_id")
+            return str(rid) if rid else ""
 
         try:
             # ── 使用 astream_events (version="v2") 捕获所有流式事件 ─────────────
@@ -105,8 +106,10 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                 if ev_type == "on_tool_start":
                     tool_name = event.get("name", "unknown")
                     tool_input = event.get("data", {}).get("input", {})
-                    args_str = json.dumps(tool_input, ensure_ascii=False)
-                    if dedup_tool(tool_name, args_str):
+                    rid = _event_run_id(event)
+                    dedup_key = rid or f"{tool_name}:{json.dumps(tool_input, ensure_ascii=False)[:120]}"
+                    if dedup_key not in seen_tool_starts:
+                        seen_tool_starts.add(dedup_key)
                         logger.info("[chat_stream] tool_start: %s", tool_name)
                         yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input, 'result': ''})}\n\n"
 
@@ -114,14 +117,14 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                 elif ev_type == "on_tool_end":
                     tool_name = event.get("name", "unknown")
                     raw_output = event.get("data", {}).get("output", "")
-                    # output 可能是 str 或 dict
                     if isinstance(raw_output, dict):
                         tool_result = json.dumps(raw_output, ensure_ascii=False)
                     else:
                         tool_result = str(raw_output) if raw_output else ""
-                    args_str = json.dumps(event.get("data", {}).get("input", {}), ensure_ascii=False)
-                    if dedup_tool(tool_name, args_str):
-                        # 避免重复推送（on_tool_start 已推送过开头）
+                    rid = _event_run_id(event)
+                    dedup_key = rid or f"end:{tool_name}:{tool_result[:80]}"
+                    if dedup_key not in seen_tool_ends:
+                        seen_tool_ends.add(dedup_key)
                         yield f"data: {json.dumps({'type': 'tool_result', 'name': tool_name, 'result': tool_result})}\n\n"
 
                 # ── LLM token 流 ───────────────────────────────────────────────
@@ -129,6 +132,17 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content") and chunk.content:
                         content = chunk.content
+                        if isinstance(content, list):
+                            # 多模态 chunk：只拼接 text 部分
+                            text_parts = []
+                            for part in content:
+                                if isinstance(part, str):
+                                    text_parts.append(part)
+                                elif isinstance(part, dict) and part.get("type") == "text":
+                                    text_parts.append(part.get("text") or "")
+                            content = "".join(text_parts)
+                        if not content:
+                            continue
                         # 过滤掉工具调用标记文本
                         skip = (
                             content.strip() in ("Tool", "Tool/use", "Invoking tool:", "=" * 20) or
@@ -826,20 +840,25 @@ async def stream_orch_job_events(job_id: str) -> StreamingResponse:
     async def event_generator() -> AsyncGenerator[str, None]:
         import json as _j
 
-        # 1. 推送已有历史事件（让新连接的客户端不漏掉之前的事件）
+        # 1. 先推送已有的历史事件
         for ev in job.events:
-            payload = _j.dumps(dict(ev), ensure_ascii=False)
-            yield f"event: {ev['type']}\ndata: {payload}\n\n"
+            ev_dict = dict(ev)
+            ev_type = ev_dict.get("type", "?")
+            # 把 type 嵌入 data 内部 — 防止前端 SSE parser 丢失 event: type 行时无法路由
+            if "type" not in ev_dict.get("data", {}):
+                ev_dict["data"] = dict(ev_dict.get("data", {}), type=ev_type)
+            payload = _j.dumps(ev_dict, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
 
-        # 2. 如果任务还在跑，继续推送新事件（long-polling 轮询）
+        # 2. 如果任务还在跑，继续推送新事件
         if job.status not in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED):
             last_idx = len(job.events)
             waited = 0
-            max_wait = 300  # 最多等 5 分钟无活动后断开
+            max_wait = 300
 
             while job.status not in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED):
                 if waited >= max_wait:
-                    yield f"event: error\ndata: {_j.dumps({'type': 'error', 'message': 'SSE 连接超时（5分钟无活动）'}, ensure_ascii=False)}\n\n"
+                    yield f"data: { _j.dumps({'type':'error','message':'SSE 连接超时（5分钟无活动）'}, ensure_ascii=False) }\n\n"
                     break
                 await asyncio.sleep(0.5)
                 waited += 0.5
@@ -847,11 +866,15 @@ async def stream_orch_job_events(job_id: str) -> StreamingResponse:
                     waited = 0
                     for ev in list(job.events)[last_idx:]:
                         last_idx = len(job.events)
-                        payload = _j.dumps(dict(ev), ensure_ascii=False)
-                        yield f"event: {ev['type']}\ndata: {payload}\n\n"
+                        ev_dict = dict(ev)
+                        ev_type = ev_dict.get("type", "?")
+                        if "type" not in ev_dict.get("data", {}):
+                            ev_dict["data"] = dict(ev_dict.get("data", {}), type=ev_type)
+                        payload = _j.dumps(ev_dict, ensure_ascii=False)
+                        yield f"data: {payload}\n\n"
 
         # 3. 最终状态
-        yield f"event: done\ndata: {_j.dumps({{'type': 'done', 'status': job.status.value}}, ensure_ascii=False)}\n\n"
+        yield f"data: {_j.dumps({'type': 'done', 'status': job.status.value}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),

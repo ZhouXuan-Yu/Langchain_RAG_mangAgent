@@ -1,5 +1,6 @@
 """RAG Worker — ChromaDB 记忆检索，带置信度标记."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -42,7 +43,9 @@ class RAGWorker:
 
         # ── Step 1: ChromaDB 向量检索 ─────────────────────────────
         try:
-            rag_result = memory_search.invoke({"query": description})
+            rag_result = await asyncio.to_thread(
+                memory_search.invoke, {"query": description}
+            )
 
             if progress_callback:
                 await progress_callback({
