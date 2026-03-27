@@ -1,5 +1,7 @@
 """任务调度器 — SQLite 持久化 + asyncio 异步执行."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
