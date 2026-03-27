@@ -234,7 +234,7 @@
 
     .kb-divider { width: 1px; height: 14px; background: var(--border); }
 
-    /* 可用工具目录（与知识库卡片风格统一） */
+    /* 可用工具目录 */
     .tool-details { margin-bottom: 4px; }
     .tool-details > summary {
       cursor: pointer;
@@ -246,8 +246,16 @@
       font-family: var(--font-mono);
       color: var(--text);
       padding: 2px 0;
+      user-select: none;
     }
     .tool-details > summary::-webkit-details-marker { display: none; }
+    .tool-details > summary::after {
+      content: '▼';
+      font-size: 8px;
+      opacity: 0.5;
+      transition: transform 200ms;
+    }
+    .tool-details[open] > summary::after { transform: rotate(180deg); }
     .tool-intro {
       font-size: 10px;
       color: var(--muted);
@@ -281,6 +289,57 @@
       color: var(--muted);
     }
 
+    /* 工具调用区域 - 可滚动容器 */
+    .tool-log-container {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 80px;
+      max-height: 300px;
+    }
+    .tool-log-container::-webkit-scrollbar { width: 4px; }
+    .tool-log-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* 单次问答的工具调用折叠块 */
+    .qa-tool-block {
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      background: var(--elevated);
+    }
+    .qa-tool-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--muted);
+      background: rgba(0,0,0,0.15);
+    }
+    .qa-tool-header:hover { background: rgba(0,0,0,0.25); }
+    .qa-tool-header .qa-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .qa-tool-header .qa-toggle {
+      font-size: 8px;
+      transition: transform 200ms;
+    }
+    .qa-tool-block[open] .qa-toggle { transform: rotate(180deg); }
+    .qa-tool-body { padding: 6px 10px; }
+
+    .tool-entry { padding: 8px 10px; border-radius: var(--radius-sm); margin-bottom: 6px; background: var(--surface); border: 1px solid var(--border); position: relative; }
+    .tool-entry:last-child { margin-bottom: 0; }
+    .tool-entry-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+    .tool-entry-name { font-size: 11px; font-family: var(--font-mono); color: #a78bfa; }
+    .tool-entry-seq { font-size: 10px; font-family: var(--font-mono); color: var(--border-h); }
+    .tool-entry-data { font-size: 10px; font-family: var(--font-mono); color: var(--muted); white-space: pre-wrap; word-break: break-all; max-height: 50px; overflow: hidden; line-height: 1.4; }
+    .tool-entry-result { font-size: 10px; font-family: var(--font-mono); color: #4ade80; white-space: pre-wrap; word-break: break-all; max-height: 40px; overflow: hidden; line-height: 1.4; margin-top: 4px; border-top: 1px dashed var(--border); padding-top: 4px; }
+
     @media (max-width: 1100px) {
       .chat-layout { grid-template-columns: 1fr 240px; }
       .side-panel-card:last-child { display: none; }
@@ -294,169 +353,106 @@
 <body class="glass-theme">
 
 <div id="app">
-  <header class="topbar" id="header">
-    <!-- 由 shared.js 动态渲染 -->
-  </header>
-  <div class="main-area">
-    <div class="chat-layout">
-      <!-- 左侧：对话区 + 工具栏 -->
-      <div class="chat-panel-left">
-        <div class="chat-toolbar">
-          <div class="toolbar-left">
-            <span class="toolbar-stat" id="stat-indicator">
-              <span class="dot"></span>
-              <span id="stat-text">空闲</span>
-            </span>
-            <select class="model-select" id="chat-model-select" title="切换模型">
-              <option value="deepseek-chat">V3</option>
-              <option value="deepseek-reasoner">R1</option>
-            </select>
-          </div>
-          <div class="toolbar-right">
-            <span class="toolbar-stat" id="msg-count-stat">
-              <span id="msg-count">0</span> 条消息
-            </span>
-            <button class="toolbar-btn" onclick="chatExport()" title="导出对话">
-              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              导出
-            </button>
-            <button class="toolbar-btn" onclick="chatClearAll()" title="清空对话">
-              <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              清空
-            </button>
-          </div>
-        </div>
-
-        <div class="chat-panel glass" style="flex:1;min-height:0">
-          <div class="chat-msgs" id="chat-msgs">
-            <div class="empty-state" id="chat-empty">
-              <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <p>发送消息开始对话<br><span style="opacity:0.5;font-size:11px">Agent 会记住你的偏好和上下文</span></p>
-            </div>
-          </div>
-          <div class="chat-input-area">
-            <div class="chat-input-row">
-              <textarea id="chat-text-input" class="chat-text-input"
-                placeholder="输入消息... (Shift+Enter 换行，Enter 发送)"
-                rows="1"
-                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"
-                oninput="autoResize(this)"></textarea>
-              <button class="chat-send-btn" id="chat-send-btn" onclick="chatSend()">
-                <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-              </button>
-            </div>
-            <div class="kb-shortcut-hint">
-              <kbd>Enter</kbd> 发送 &nbsp; <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 中间：可用工具 + 本次调用记录 -->
-      <div class="side-panel-card glass">
-        <div class="panel-hdr">
-          <span class="panel-title">工具</span>
-        </div>
-        <div class="panel-body">
-          <details class="tool-details" open>
-            <summary>
-              <span>可用工具</span>
-              <span class="panel-count">6</span>
-            </summary>
-            <p class="tool-intro">以下为 Agent 可自动调用的工具（由模型根据问题选择）。</p>
-            <div class="tool-catalog">
-              <div class="tool-card-static"><div class="nm">memory_search</div><div class="desc">从长期记忆（向量库）中检索与用户问题相关的历史事实、项目与偏好。</div></div>
-              <div class="tool-card-static"><div class="nm">save_memory</div><div class="desc">将重要事实写入长期记忆，便于后续对话引用；自动去重相似内容。</div></div>
-              <div class="tool-card-static"><div class="nm">web_search</div><div class="desc">联网搜索时效性信息（新闻、版本、文档等），适合「最新」「今年」类问题。</div></div>
-              <div class="tool-card-static"><div class="nm">browse_page</div><div class="desc">抓取指定网页正文，用于阅读链接详情或核对网页内容。</div></div>
-              <div class="tool-card-static"><div class="nm">calculator</div><div class="desc">计算数学表达式，支持加减乘除、括号与乘方。</div></div>
-              <div class="tool-card-static"><div class="nm">process_image</div><div class="desc">根据图片路径处理或描述图像内容（多模态场景）。</div></div>
-            </div>
-          </details>
-          <div class="tool-log-sep">
-            <span>本次调用</span>
-            <span class="panel-count" id="tool-num">0</span>
-          </div>
-          <div id="tool-log">
-            <div class="empty-state">
-              <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-              <p>工具调用记录<br>显示在这里</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 右侧：记忆面板 -->
-      <div class="side-panel-card glass">
-        <div class="panel-hdr">
-          <span class="panel-title">长期记忆</span>
-          <span class="panel-count" id="mem-num">0</span>
-        </div>
-        <div class="panel-body" id="mem-list">
-          <div class="empty-state">
-            <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10H12V2z"/></svg>
-            <p>长期记忆<br>存储在向量数据库中</p>
-          </div>
-        </div>
-      </div>
-    </div>
+  <header class="topbar" id="header"></header>
+  <div class="main-area" id="main-content">
+    <!-- SPA: 内容由 registerSPA / navigateTo 动态替换 -->
   </div>
 </div>
 
 <script>
-injectStyles();
+// ── 对话页内容模板 ─────────────────────────────────────────────
+var CHAT_CONTENT = [
+  '<div class="chat-layout">',
+    '<div class="chat-panel-left">',
+      '<div class="chat-toolbar">',
+        '<div class="toolbar-left">',
+          '<span class="toolbar-stat" id="stat-indicator"><span class="dot"></span><span id="stat-text">空闲</span></span>',
+          '<select class="model-select" id="chat-model-select" title="切换模型">',
+            '<option value="deepseek-chat">V3</option>',
+            '<option value="deepseek-reasoner">R1</option>',
+          '</select>',
+        '</div>',
+        '<div class="toolbar-right">',
+          '<span class="toolbar-stat" id="msg-count-stat"><span id="msg-count">0</span> 条消息</span>',
+          '<button class="toolbar-btn" onclick="chatExport()" title="导出对话">',
+            '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+            '导出',
+          '</button>',
+          '<button class="toolbar-btn" onclick="chatClearAll()" title="清空对话">',
+            '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+            '清空',
+          '</button>',
+        '</div>',
+      '</div>',
+      '<div class="chat-panel glass" style="flex:1;min-height:0">',
+        '<div class="chat-msgs" id="chat-msgs">',
+          '<div class="empty-state" id="chat-empty">',
+            '<svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+            '<p>发送消息开始对话<br><span style="opacity:0.5;font-size:11px">Agent 会记住你的偏好和上下文</span></p>',
+          '</div>',
+        '</div>',
+        '<div class="chat-input-area">',
+          '<div class="chat-input-row">',
+            '<textarea id="chat-text-input" class="chat-text-input" placeholder="输入消息... (Shift+Enter 换行，Enter 发送)" rows="1" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>',
+            '<button class="chat-send-btn" id="chat-send-btn" onclick="chatSend()">',
+              '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
+            '</button>',
+          '</div>',
+          '<div class="kb-shortcut-hint"><kbd>Enter</kbd> 发送 &nbsp; <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</div>',
+        '</div>',
+      '</div>',
+    '</div>',
+    '<div class="side-panel-card glass">',
+      '<div class="panel-hdr"><span class="panel-title">工具</span></div>',
+      '<div class="panel-body">',
+        '<details class="tool-details">',
+          '<summary><span>可用工具</span><span class="panel-count">6</span></summary>',
+          '<p class="tool-intro">以下为 Agent 可自动调用的工具（由模型根据问题选择）。</p>',
+          '<div class="tool-catalog">',
+            '<div class="tool-card-static"><div class="nm">memory_search</div><div class="desc">从长期记忆（向量库）中检索相关历史。</div></div>',
+            '<div class="tool-card-static"><div class="nm">save_memory</div><div class="desc">将重要事实写入长期记忆。</div></div>',
+            '<div class="tool-card-static"><div class="nm">web_search</div><div class="desc">联网搜索时效性信息。</div></div>',
+            '<div class="tool-card-static"><div class="nm">browse_page</div><div class="desc">抓取指定网页正文。</div></div>',
+            '<div class="tool-card-static"><div class="nm">calculator</div><div class="desc">计算数学表达式。</div></div>',
+            '<div class="tool-card-static"><div class="nm">process_image</div><div class="desc">处理或描述图像内容。</div></div>',
+          '</div>',
+        '</details>',
+        '<div class="tool-log-sep"><span>本次调用</span><span class="panel-count" id="tool-num">0</span></div>',
+        '<div class="tool-log-container">',
+          '<details class="qa-tool-block" id="current-qa-block" open>',
+            '<summary class="qa-tool-header">',
+              '<span class="qa-label"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span>工具调用</span></span>',
+              '<span class="qa-toggle">▼</span>',
+            '</summary>',
+            '<div class="qa-tool-body">',
+              '<div id="tool-log">',
+                '<div class="empty-state">',
+                  '<svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+                  '<p>工具调用记录<br>显示在这里</p>',
+                '</div>',
+              '</div>',
+            '</div>',
+          '</details>',
+        '</div>',
+      '</div>',
+    '</div>',
+    '<div class="side-panel-card glass">',
+      '<div class="panel-hdr"><span class="panel-title">长期记忆</span><span class="panel-count" id="mem-num">0</span></div>',
+      '<div class="panel-body" id="mem-list">',
+        '<div class="empty-state">',
+          '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10H12V2z"/></svg>',
+          '<p>长期记忆<br>存储在向量数据库中</p>',
+        '</div>',
+      '</div>',
+    '</div>',
+  '</div>'
+].join('');
 
-function persistChatState() {
-  try {
-    if (!G.msgs || !G.msgs.length) {
-      sessionStorage.removeItem(RAG_CHAT_SNAPSHOT_KEY);
-      return;
-    }
-    sessionStorage.setItem(RAG_CHAT_SNAPSHOT_KEY, JSON.stringify({
-      threadId: G.threadId,
-      model: G.model,
-      msgs: G.msgs,
-      toolLog: G.toolLog || []
-    }));
-  } catch (e) {}
-}
-
-function restoreChatState() {
-  try {
-    var raw = sessionStorage.getItem(RAG_CHAT_SNAPSHOT_KEY);
-    if (!raw) return;
-    var snap = JSON.parse(raw);
-    if (snap.threadId !== G.threadId) return;
-    G.msgs = snap.msgs || [];
-    G.model = snap.model || G.model;
-    G.tools = [];
-
-    var box = document.getElementById('chat-msgs');
-    box.innerHTML = '';
-    if (!G.msgs.length) {
-      box.innerHTML = '<div class="empty-state" id="chat-empty"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>发送消息开始对话<br><span style="opacity:0.5;font-size:11px">Agent 会记住你的偏好和上下文</span></p></div>';
-      updateMsgCount();
-      return;
-    }
-    G.msgs.forEach(function(m) {
-      chatAddMsg(m.role, m.content, false);
-    });
-    var tlog = document.getElementById('tool-log');
-    tlog.innerHTML = '';
-    G.tools = [];
-    G.toolLog = [];
-    (snap.toolLog || []).forEach(function(t) {
-      chatAddTool(t.name, t.input);
-    });
-    updateMsgCount();
-  } catch (e) {}
-}
-
-setTheme(localStorage.getItem('rag_theme') || 'glass');
-loadConfig(function(c) {
-  renderHeader('/');
+// ── 对话页：页面展示回调 ───────────────────────────────────────
+function chatOnShow(savedState) {
   var sel = document.getElementById('chat-model-select');
   if (sel) {
+    sel.value = G.model;
     sel.addEventListener('change', function(e) {
       var m = e.target.value;
       if (m === G.model) return;
@@ -465,37 +461,92 @@ loadConfig(function(c) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({model: m})
       }).then(function(r) {
-        if (r.ok) { G.model = m; toast('模型已切换'); renderHeader('/'); persistChatState(); }
+        if (r.ok) { G.model = m; toast('模型已切换'); renderHeader('/'); }
         else toast('切换失败', 'error');
       }).catch(function() { toast('切换失败', 'error'); });
     });
   }
-  restoreChatState();
-  if (sel) sel.value = G.model;
-  loadChatMem();
-});
 
-window.addEventListener('pagehide', persistChatState);
-document.addEventListener('visibilitychange', function() {
-  if (document.visibilityState === 'hidden') persistChatState();
+  // 恢复聊天状态
+  if (savedState) {
+    if (savedState.msgsHtml && document.getElementById('chat-msgs')) {
+      document.getElementById('chat-msgs').innerHTML = savedState.msgsHtml;
+      G.msgs = savedState.msgs || [];
+      G.tools = savedState.tools || [];
+      if (document.getElementById('tool-num')) {
+        document.getElementById('tool-num').textContent = savedState.toolNum || '0';
+      }
+      if (savedState.toolHtml && document.getElementById('tool-log')) {
+        document.getElementById('tool-log').innerHTML = savedState.toolHtml;
+      }
+      if (document.getElementById('msg-count')) {
+        document.getElementById('msg-count').textContent = G.msgs.length;
+      }
+    }
+  }
+
+  loadChatMem();
+}
+
+// ── 对话页：状态保存回调 ───────────────────────────────────────
+function chatOnSave() {
+  return {
+    msgs: G.msgs,
+    tools: G.tools,
+    toolNum: document.getElementById('tool-num') ? document.getElementById('tool-num').textContent : '0',
+    toolHtml: document.getElementById('tool-log') ? document.getElementById('tool-log').innerHTML : '',
+    msgsHtml: document.getElementById('chat-msgs') ? document.getElementById('chat-msgs').innerHTML : ''
+  };
+}
+
+// ── 注册对话页 ────────────────────────────────────────────────
+registerSPA('/', CHAT_CONTENT, chatOnShow, chatOnSave);
+
+// ── 页面初始化 ────────────────────────────────────────────────
+injectStyles();
+initPage('/');
+
+// 首次加载时自动显示对话页
+var main = document.getElementById('main-content');
+main.innerHTML = CHAT_CONTENT;
+_SPA.currentPath = '/';
+
+initSPA('/');
+loadConfig(function(c) {
+  renderHeader('/');
 });
+chatOnShow(null);
 
 /* ── 发送消息 ──────────────────────────────────────────── */
+var _currentQAId = 0;
+
 function chatSend() {
   var inp = document.getElementById('chat-text-input');
+  if (!inp) return;
   var text = inp.value.trim();
   if (!text || G.busy) return;
   G.busy = true;
   var btn = document.getElementById('chat-send-btn');
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
   inp.value = '';
   inp.style.height = 'auto';
 
   updateToolbarStat('busy');
-  document.getElementById('tool-log').innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><p>工具调用记录<br>显示在这里</p></div>';
-  document.getElementById('tool-num').textContent = '0';
+
+  // 创建新的问答工具调用折叠块
+  _currentQAId++;
+  var qaId = 'qa-' + _currentQAId;
+  var toolContainer = document.querySelector('.tool-log-container');
+  if (toolContainer) {
+    toolContainer.innerHTML = '<details class="qa-tool-block" id="' + qaId + '" open>' +
+      '<summary class="qa-tool-header">' +
+        '<span class="qa-label"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span>工具调用</span></span>' +
+        '<span class="qa-toggle">▼</span>' +
+      '</summary>' +
+      '<div class="qa-tool-body"><div id="tool-log"></div></div>' +
+    '</details>';
+  }
   G.tools = [];
-  G.toolLog = [];
 
   chatAddMsg('user', text);
   G.msgs.push({role: 'user', content: text});
@@ -507,8 +558,8 @@ function chatSend() {
     body: JSON.stringify({message: text, thread_id: G.threadId, model: G.model})
   }).then(function(r) {
     if (!r.ok) {
-      aiBub.innerHTML = '<p style="color:#f87171">请求失败: ' + r.status + '</p>';
-      G.busy = false; btn.disabled = false; updateToolbarStat('idle');
+      if (aiBub) aiBub.innerHTML = '<p style="color:#f87171">请求失败: ' + r.status + '</p>';
+      G.busy = false; if (btn) btn.disabled = false; updateToolbarStat('idle');
       return;
     }
     var reader = r.body.getReader();
@@ -518,10 +569,11 @@ function chatSend() {
     function read() {
       reader.read().then(function(result) {
         if (result.done) {
-          if (full) aiBub.innerHTML = md(full);
-          G.busy = false; btn.disabled = false; updateToolbarStat('idle');
+          if (full && aiBub) aiBub.innerHTML = md(full);
+          G.busy = false; if (btn) btn.disabled = false; updateToolbarStat('idle');
           updateMsgCount();
-          persistChatState();
+          // 更新工具调用块标题
+          updateToolBlockTitle();
           return;
         }
         buf += decoder.decode(result.value, {stream: true});
@@ -534,37 +586,48 @@ function chatSend() {
             var d = JSON.parse(ln.slice(6));
             if (d.type === 'token') {
               full += d.content;
-              aiBub.innerHTML = md(full) + '<div class="loading-dots" style="margin-top:6px"><span></span><span></span><span></span></div>';
+              if (aiBub) aiBub.innerHTML = md(full) + '<div class="loading-dots" style="margin-top:6px"><span></span><span></span><span></span></div>';
               scrollBot(document.getElementById('chat-msgs'));
             } else if (d.type === 'tool') {
-              chatAddTool(d.name, d.input);
+              chatAddTool(d.name, d.input, d.result);
             } else if (d.type === 'done') {
-              aiBub.innerHTML = md(full);
+              if (aiBub) aiBub.innerHTML = md(full);
               G.msgs.push({role: 'assistant', content: full});
               loadChatMem();
               updateMsgCount();
-              persistChatState();
+              updateToolBlockTitle();
             } else if (d.type === 'error') {
-              aiBub.innerHTML = '<p style="color:#f87171">错误: ' + esc(d.content) + '</p>';
+              if (aiBub) aiBub.innerHTML = '<p style="color:#f87171">错误: ' + esc(d.content) + '</p>';
             }
           } catch (e) {}
         }
         read();
       }).catch(function(e) {
-        aiBub.innerHTML = '<p style="color:#f87171">连接错误: ' + esc(e.message) + '</p>';
-        G.busy = false; btn.disabled = false; updateToolbarStat('error');
+        if (aiBub) aiBub.innerHTML = '<p style="color:#f87171">连接错误: ' + esc(e.message) + '</p>';
+        G.busy = false; if (btn) btn.disabled = false; updateToolbarStat('error');
       });
     }
     read();
   }).catch(function(e) {
-    aiBub.innerHTML = '<p style="color:#f87171">连接错误: ' + esc(e.message) + '</p>';
-    G.busy = false; btn.disabled = false; updateToolbarStat('error');
+    if (aiBub) aiBub.innerHTML = '<p style="color:#f87171">连接错误: ' + esc(e.message) + '</p>';
+    G.busy = false; if (btn) btn.disabled = false; updateToolbarStat('error');
   });
+}
+
+function updateToolBlockTitle() {
+  var block = document.getElementById('current-qa-block');
+  if (block && G.tools.length > 0) {
+    var label = block.querySelector('.qa-label span:last-child');
+    if (label) label.textContent = '工具调用 (' + G.tools.length + ')';
+  }
+  var toolNumEl = document.getElementById('tool-num');
+  if (toolNumEl) toolNumEl.textContent = G.tools.length;
 }
 
 function updateToolbarStat(state) {
   var ind = document.getElementById('stat-indicator');
   var txt = document.getElementById('stat-text');
+  if (!ind || !txt) return;
   ind.className = 'toolbar-stat ' + state;
   if (state === 'busy') txt.textContent = '思考中...';
   else if (state === 'error') txt.textContent = '连接失败';
@@ -572,11 +635,13 @@ function updateToolbarStat(state) {
 }
 
 function updateMsgCount() {
-  document.getElementById('msg-count').textContent = G.msgs.length;
+  var el = document.getElementById('msg-count');
+  if (el) el.textContent = G.msgs.length;
 }
 
 function chatAddMsg(role, content, loading) {
   var box = document.getElementById('chat-msgs');
+  if (!box) return null;
   var empty = document.getElementById('chat-empty');
   if (empty) empty.remove();
   var row = document.createElement('div');
@@ -598,27 +663,34 @@ function chatAddMsg(role, content, loading) {
   return bub;
 }
 
-function chatAddTool(name, inp) {
-  if (!G.toolLog) G.toolLog = [];
-  G.toolLog.push({ name: name, input: inp });
+function chatAddTool(name, inp, result) {
   var log = document.getElementById('tool-log');
+  if (!log) return;
   var empty = log.querySelector('.empty-state');
   if (empty) empty.remove();
   var item = document.createElement('div');
   item.className = 'tool-entry';
   var data = inp;
   if (typeof inp === 'object') {
-    try { data = JSON.stringify(inp, null, 2).slice(0, 200); } catch(e) {}
+    try { data = JSON.stringify(inp, null, 2).slice(0, 300); } catch(e) { data = String(inp); }
   }
   var seq = G.tools.length + 1;
+  var resultHtml = '';
+  if (result) {
+    resultHtml = '<div class="tool-entry-result">' + esc(String(result).slice(0, 150)) + '</div>';
+  }
   item.innerHTML = '<div class="tool-entry-header">' +
     '<span class="tool-entry-name">' + esc(name) + '</span>' +
     '<span class="tool-entry-seq">#' + seq + '</span>' +
     '</div>' +
-    '<div class="tool-entry-data">' + esc(String(data)) + '</div>';
+    '<div class="tool-entry-data">' + esc(String(data)) + '</div>' +
+    resultHtml;
   log.appendChild(item);
-  scrollBot(log);
-  document.getElementById('tool-num').textContent = ++G.tools.length;
+  // 确保容器滚动到底部
+  var container = document.querySelector('.tool-log-container');
+  if (container) container.scrollTop = container.scrollHeight;
+  G.tools.push({name: name, input: inp, result: result});
+  updateToolBlockTitle();
 }
 
 function loadChatMem() {
@@ -628,7 +700,9 @@ function loadChatMem() {
   }).then(function(mems) {
     if (!mems) return;
     var panel = document.getElementById('mem-list');
-    document.getElementById('mem-num').textContent = mems.length;
+    if (!panel) return;
+    var memNumEl = document.getElementById('mem-num');
+    if (memNumEl) memNumEl.textContent = mems.length;
     if (!mems.length) {
       panel.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10H12V2z"/></svg><p>长期记忆<br>存储在向量数据库中</p></div>';
       return;
@@ -658,14 +732,12 @@ function chatDelMem(id) {
 function chatClearAll() {
   if (!confirm('确定要清空当前对话记录吗？\n（长期记忆不会被清除）')) return;
   var box = document.getElementById('chat-msgs');
-  box.innerHTML = '<div class="empty-state" id="chat-empty"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>发送消息开始对话<br><span style="opacity:0.5;font-size:11px">Agent 会记住你的偏好和上下文</span></p></div>';
+  if (box) box.innerHTML = '<div class="empty-state" id="chat-empty"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>发送消息开始对话<br><span style="opacity:0.5;font-size:11px">Agent 会记住你的偏好和上下文</span></p></div>';
   G.msgs = [];
   G.tools = [];
-  G.toolLog = [];
-  try { sessionStorage.removeItem(RAG_CHAT_SNAPSHOT_KEY); } catch (err) {}
   updateMsgCount();
-  document.getElementById('tool-num').textContent = '0';
-  document.getElementById('tool-log').innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><p>工具调用记录<br>显示在这里</p></div>';
+  var toolNumEl = document.getElementById('tool-num');
+  if (toolNumEl) toolNumEl.textContent = '0';
   fetch('/api/chat/reset', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},

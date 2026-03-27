@@ -73,39 +73,98 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         config = {"configurable": {"thread_id": req.thread_id}}
 
         try:
-            # reason_node 是 async def，必须用 ainvoke
             result = await agent.ainvoke(
                 {"messages": [HumanMessage(content=req.message)], "thread_id": req.thread_id},
                 config=config,
             )
 
-            # 提取最终 AI 回复
             messages = result.get("messages", []) if isinstance(result, dict) else []
-            final_text = ""
+
+            # 提取工具调用记录
+            # 1. 从 memory_context 中提取（格式：[记忆检索]\n... 或 [网页搜索]\n...）
+            # 2. 从 ToolMessage 中提取（如果有）
+            # 3. 从 pending_memory 相关消息中提取
             tool_calls = []
+            memory_context = result.get("memory_context", []) if isinstance(result, dict) else []
+            web_context = result.get("web_context", []) if isinstance(result, dict) else []
+
+            # 从 memory_context 提取 memory_search
+            for ctx in memory_context:
+                if isinstance(ctx, str):
+                    if "[记忆检索]" in ctx or "memory_search" in ctx.lower():
+                        tool_calls.append({
+                            "name": "memory_search",
+                            "input": {"query": req.message},
+                            "result": ctx[:300]
+                        })
+                    elif "[记忆已更新]" in ctx or "save_memory" in ctx.lower():
+                        tool_calls.append({
+                            "name": "save_memory",
+                            "input": {"message": req.message},
+                            "result": ctx[:300]
+                        })
+
+            # 从 web_context 提取 web_search
+            for ctx in web_context:
+                if isinstance(ctx, str):
+                    if "[网页搜索]" in ctx or "web_search" in ctx.lower():
+                        # 提取查询（从上下文中推断）
+                        tool_calls.append({
+                            "name": "web_search",
+                            "input": {"query": req.message},
+                            "result": ctx[:300]
+                        })
+                    elif "[页面抓取" in ctx or "browse_page" in ctx.lower():
+                        tool_calls.append({
+                            "name": "browse_page",
+                            "input": {"context": ctx[:100]},
+                            "result": ctx[:300]
+                        })
+
+            # 从 ToolMessage 中提取（标准 LangChain 工具调用）
+            for msg in messages:
+                if hasattr(msg, "name") and msg.name in ["memory_search", "save_memory", "web_search", "browse_page", "calculator", "process_image"]:
+                    # 检查是否已存在相同的工具调用
+                    existing = any(tc.get("name") == msg.name and tc.get("result", "").startswith(str(getattr(msg, "content", ""))[:50]) for tc in tool_calls)
+                    if not existing:
+                        tool_calls.append({
+                            "name": msg.name,
+                            "input": getattr(msg, "input", {}) or {},
+                            "result": getattr(msg, "content", "")[:200] if hasattr(msg, "content") else ""
+                        })
+
+            # 从 pending_memory 提取（主动记忆）
+            pending = result.get("pending_memory", []) if isinstance(result, dict) else []
+            if pending and len(tool_calls) == 0:
+                # 有主动记忆说明触发了 save_memory
+                tool_calls.append({
+                    "name": "save_memory",
+                    "input": {"auto_save": True},
+                    "result": f"待存储 {len(pending)} 条记忆"
+                })
+
+            # 提取最终 AI 回复
+            final_text = ""
             for msg in reversed(messages):
                 if hasattr(msg, "content") and hasattr(msg, "type"):
                     if msg.type == "ai":
                         final_text = msg.content or ""
-                        tool_calls = getattr(msg, "tool_calls", []) or []
                         break
                 elif isinstance(msg, dict):
                     if msg.get("type") == "ai" or msg.get("role") == "assistant":
                         final_text = msg.get("content", "") or ""
-                        tool_calls = msg.get("tool_calls", []) or []
                         break
 
-            # 先推送工具调用事件（如果有）
+            # 推送工具调用事件（按顺序）
             for tc in tool_calls:
-                fn = tc.get("function", {})
-                tool_name = fn.get("name", "unknown")
-                tool_input = fn.get("arguments", "")
+                tool_name = tc.get("name", "unknown")
+                tool_input = tc.get("input", {})
                 if isinstance(tool_input, str):
                     try:
                         tool_input = json.loads(tool_input)
                     except Exception:
                         tool_input = {"raw": tool_input}
-                yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input})}\n\n"
+                yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input, 'result': tc.get('result', '')})}\n\n"
 
             # 推送 token（一次性全量，因为底层 LLM 是 non-streaming）
             if final_text:
