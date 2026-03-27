@@ -1,6 +1,16 @@
 """多 Agent 编排器 — Agent 注册表、任务分发、Agent 间通信."""
 
+from __future__ import annotations
+
 import json
+import logging
+import sqlite3
+import threading
+import uuid
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
 import logging
 import sqlite3
 import threading
@@ -99,7 +109,7 @@ class AgentRegistry:
 
     # ── Agent CRUD ──────────────────────────────────────────────────────────
 
-    def list(self, is_active: Optional[bool] = None) -> list[dict]:
+    def list_agents(self, is_active: Optional[bool] = None) -> list[dict]:
         """列出所有 Agent."""
         with _conn() as c:
             if is_active is not None:
@@ -298,7 +308,7 @@ class AgentRegistry:
 
     def get_org_tree(self) -> list[dict]:
         """获取 Agent 组织树（扁平结构，带 parent_id 用于前端渲染）."""
-        agents = self.list()
+        agents = self.list_agents()
         return agents
 
     def get_children(self, parent_id: str) -> list[dict]:

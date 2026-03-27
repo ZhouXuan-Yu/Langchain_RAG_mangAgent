@@ -228,9 +228,8 @@ async def get_session(thread_id: str) -> dict:
 async def list_sessions() -> list[SessionSummary]:
     """列出所有会话（基于 SQLite threads 表）."""
     try:
-        from src.memory.sqlite_store import get_sqlite_checkpointer
-        checkpointer = get_sqlite_checkpointer()
-        threads = checkpointer.list_threads(limit=50)
+        from src.memory.sqlite_store import list_threads as list_threads_from_db
+        threads = list_threads_from_db()
         return [
             SessionSummary(
                 thread_id=t.get("thread_id", ""),
@@ -323,7 +322,7 @@ async def list_agents(is_active: Optional[bool] = None) -> list[AgentProfile]:
     """列出所有 Agent."""
     from src.multi_agent.orchestrator import get_agent_registry
     reg = get_agent_registry()
-    agents = reg.list(is_active=is_active)
+    agents = reg.list_agents(is_active=is_active)
     return [AgentProfile(**a) for a in agents]
 
 
@@ -548,7 +547,7 @@ async def list_documents(doc_type: Optional[str] = None) -> DocumentListResponse
     """列出所有已上传文档."""
     from src.document_processor import get_document_store
     store = get_document_store()
-    docs = store.list(doc_type=doc_type)
+    docs = store.list_docs(doc_type=doc_type)
     return DocumentListResponse(
         documents=[Document(**d) for d in docs],
         total=len(docs),
