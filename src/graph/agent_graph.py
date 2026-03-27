@@ -147,7 +147,15 @@ def build_react_agent(
     """
     from langgraph.prebuilt import create_react_agent
 
-    tools = [web_search, browse_page, calculator, memory_search, save_memory, process_image]
+    tools = [
+        web_search,
+        browse_page,
+        calculator,
+        memory_search,
+        knowledge_base_search,
+        save_memory,
+        process_image,
+    ]
 
     # pre_model_hook 同时做 PII 脱敏 + 工具参数验证
     pre_hook = pii_pre_model_hook if enable_middleware else None

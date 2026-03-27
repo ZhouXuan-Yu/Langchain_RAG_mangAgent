@@ -299,6 +299,104 @@
     .tool-log-container::-webkit-scrollbar { width: 4px; }
     .tool-log-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
+    /* 单次对话任务块（避免 summary 内 SVG 无尺寸撑满整栏） */
+    .task-block {
+      margin-bottom: 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--elevated);
+      overflow: hidden;
+    }
+    .task-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      list-style: none;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--muted);
+      background: rgba(0,0,0,0.2);
+    }
+    .task-header::-webkit-details-marker { display: none; }
+    .task-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .task-header-icon {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+    }
+    .task-header-icon svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      opacity: 0.85;
+    }
+    .task-header-title { color: var(--text); font-weight: 500; }
+    .task-header-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .task-toggle { font-size: 8px; opacity: 0.5; }
+    .task-body { padding: 6px 8px 10px; border-top: 1px solid var(--border); }
+
+    .tool-card {
+      margin-bottom: 6px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      font-size: 11px;
+    }
+    .tool-card > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      cursor: pointer;
+      list-style: none;
+      font-family: var(--font-mono);
+    }
+    .tool-card > summary::-webkit-details-marker { display: none; }
+    .tool-card-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .tool-name { color: #a78bfa; font-weight: 500; }
+    .tool-seq { font-size: 10px; color: var(--border-h); }
+    .tool-toggle-icon { font-size: 8px; opacity: 0.5; }
+    .tool-card-content { padding: 0 8px 8px; font-family: var(--font-mono); font-size: 10px; }
+    .tool-data-label, .tool-result-label { color: var(--border-h); margin-top: 6px; margin-bottom: 2px; }
+    .tool-data-value, .tool-result-value {
+      color: var(--muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 120px;
+      overflow-y: auto;
+      line-height: 1.4;
+    }
+    .tool-result-value { color: #86efac; }
+    .tool-status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #fbbf24;
+      flex-shrink: 0;
+    }
+    .tool-status-dot.done { background: #4ade80; }
+    .tool-status-dot.busy { animation: pulse 1s ease-in-out infinite; }
+
     /* 单次问答的工具调用折叠块 */
     .qa-tool-block {
       margin-bottom: 8px;
@@ -406,10 +504,11 @@ var CHAT_CONTENT = [
       '<div class="panel-hdr"><span class="panel-title">工具</span></div>',
       '<div class="panel-body">',
         '<details class="tool-details">',
-          '<summary><span>可用工具</span><span class="panel-count">6</span></summary>',
+          '<summary><span>可用工具</span><span class="panel-count">7</span></summary>',
           '<p class="tool-intro">以下为 Agent 可自动调用的工具（由模型根据问题选择）。</p>',
           '<div class="tool-catalog">',
-            '<div class="tool-card-static"><div class="nm">memory_search</div><div class="desc">从长期记忆（向量库）中检索相关历史。</div></div>',
+            '<div class="tool-card-static"><div class="nm">memory_search</div><div class="desc">从长期记忆（向量库）中检索用户相关历史与偏好。</div></div>',
+            '<div class="tool-card-static"><div class="nm">knowledge_base_search</div><div class="desc">从知识库已上传文档（PDF/Word 等）中语义检索片段。</div></div>',
             '<div class="tool-card-static"><div class="nm">save_memory</div><div class="desc">将重要事实写入长期记忆。</div></div>',
             '<div class="tool-card-static"><div class="nm">web_search</div><div class="desc">联网搜索时效性信息。</div></div>',
             '<div class="tool-card-static"><div class="nm">browse_page</div><div class="desc">抓取指定网页正文。</div></div>',
@@ -635,7 +734,7 @@ function ensureTaskBlock() {
   block.innerHTML =
     '<summary class="task-header">' +
       '<div class="task-header-left">' +
-        '<div class="task-header-icon"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>' +
+        '<div class="task-header-icon"><svg width="14" height="14" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>' +
         '<span class="task-header-title">任务执行中</span>' +
       '</div>' +
       '<span class="task-header-badge" id="' + _currentTaskId_Active + '-badge">0 个工具</span>' +

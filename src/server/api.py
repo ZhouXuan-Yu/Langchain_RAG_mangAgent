@@ -820,8 +820,23 @@ async def get_orch_job(job_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Job not found")
 
     resp = job.to_dict()
-    if job.status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED):
-        resp["events"] = [dict(e) for e in job.events]
+    # 运行中也需要返回 events，否则前端轮询 /jobs/{id} 时执行日志始终为空
+    resp["events"] = [dict(e) for e in job.events]
+    # #region agent log
+    try:
+        import json as _dbg_json
+        import time as _dbg_time
+        with open("D:/Aprogress/Langchain/debug-5df370.log", "a", encoding="utf-8") as _df:
+            _df.write(_dbg_json.dumps({
+                "sessionId": "5df370", "hypothesisId": "H2", "location": "api.get_orch_job",
+                "message": "get_job_response", "data": {
+                    "job_id": job_id, "status": job.status.value, "n_events": len(job.events),
+                },
+                "timestamp": int(_dbg_time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     return resp
 
 

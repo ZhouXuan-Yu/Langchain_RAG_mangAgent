@@ -89,7 +89,8 @@ async def get_agent(model: Optional[str] = None) -> Any:
             f"用户的项目: {', '.join(USER_PROJECTS)}。\n"
             "请结合用户的背景信息，提供精准、有帮助的回答。\n"
             "当需要搜索最新信息时，使用 web_search 工具。\n"
-            "当需要检索用户的记忆/偏好时，使用 memory_search 工具。\n"
+            "当需要检索用户个人长期记忆/偏好时，使用 memory_search 工具。\n"
+            "当问题涉及用户在知识库中上传的文档（PDF/Word 等）时，使用 knowledge_base_search 工具。\n"
             "当需要保存重要信息到记忆时，使用 save_memory 工具。\n"
             "当需要计算时，使用 calculator 工具。"
         )
