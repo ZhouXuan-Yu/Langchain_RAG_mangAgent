@@ -382,13 +382,34 @@ class AgentRegistry:
                 if ev_type == "chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content"):
-                        accumulated += chunk.content
+                        content = chunk.content
+                        if isinstance(content, list):
+                            for part in content:
+                                if isinstance(part, str):
+                                    accumulated += part
+                                elif isinstance(part, dict) and part.get("type") == "text":
+                                    accumulated += part.get("text") or ""
+
+            if not accumulated or len(accumulated.strip()) < 5:
+                logger.warning(
+                    "[agent_registry] dispatch %s returned empty/too-short result (len=%d). "
+                    "Prompt was: %.200s...",
+                    agent_id, len(accumulated), prompt_with_ctx[:200]
+                )
+                return {
+                    "status": "error",
+                    "message": f"Agent '{agent_id}' produced empty result. "
+                               f"This may indicate a configuration issue or the agent "
+                               f"failed to produce meaningful output.",
+                    "result": accumulated,
+                    "agent_id": agent_id,
+                }
 
             self.increment_completed(agent_id)
             return {"status": "ok", "result": accumulated, "agent_id": agent_id}
 
         except Exception as e:
-            logger.error(f"[agent_registry] dispatch failed for {agent_id}: {e}")
+            logger.error(f"[agent_registry] dispatch failed for {agent_id}: {e}", exc_info=True)
             return {"status": "error", "message": str(e), "agent_id": agent_id}
 
     # ── Agent 组织架构 ───────────────────────────────────────────────────────

@@ -172,7 +172,8 @@ SUPERVISOR_PROMPT_TEMPLATE = """# 角色
     {{
       "task_id": "task_1",
       "description": "清晰具体的任务描述，包含明确的交付目标",
-      "assigned_agent": "上面列出的 agent id",
+      "assigned_agent": "上面列出的 agent id（如 agent_worker_search）",
+      "worker_kind": "search_worker | rag_worker | coder",
       "output_type": "code | html | markdown | doc | data | report | search_only | mixed",
       "execution_mode": "parallel 或 sequential",
       "depends_on": [],
@@ -180,6 +181,11 @@ SUPERVISOR_PROMPT_TEMPLATE = """# 角色
     }}
   ]
 }}
+
+注意：
+- assigned_agent 必须是 agent id（如 agent_worker_search、agent_worker_rag、agent_worker_coder），不能是任意字符串
+- worker_kind 必须对应：搜索类 → search_worker，检索类 → rag_worker，代码类 → coder
+- 如果一个任务既搜索又检索，请选择主要类型
 """
 
 

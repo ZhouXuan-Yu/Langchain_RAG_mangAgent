@@ -226,8 +226,38 @@
     .log-agent.self_healer   { color: #facc15; }
     .log-agent.system         { color: var(--noir-dim); }
     .log-msg { color: var(--noir-text); word-break: break-all; font-size: 11px; }
+    /* 评价 + 输出：底部一行两列（左评价 / 右产出文件夹） */
+    .orch-bottom-row {
+      flex: 1 1 0;
+      display: flex;
+      flex-direction: row;
+      gap: 12px;
+      min-height: 0;
+      align-items: stretch;
+    }
+    .orch-eval-col, .orch-output-col {
+      flex: 1 1 0;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .orch-eval-col .orch-card.orch-eval {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .orch-output-col .orch-card.orch-output {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
     /* Eval: bottom 1/3 right column */
-    .orch-eval { flex: 0 0 auto; display: flex; flex-direction: column; }
+    .orch-eval { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
     .eval-meta {
       margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--noir-border);
       font-family: 'Courier Prime', monospace; font-size: 10px;
@@ -247,14 +277,36 @@
     }
     .result-badge.pass { background: rgba(39,174,96,0.15); border: 1px solid rgba(39,174,96,0.4); color: #2ecc71; }
     .result-badge.fail { background: rgba(192,57,43,0.15); border: 1px solid rgba(192,57,43,0.4); color: #c0392b; }
-    /* Output: bottom 1/3 right column */
-    .orch-output { flex: 1 1 0; display: flex; flex-direction: column; min-height: 0; }
+    /* Output: 右侧列内卡片 */
+    .orch-output { flex: 1 1 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    .orch-files-container {
+      flex: 1 1 0;
+      min-height: 120px;
+      overflow-y: auto;
+      margin-bottom: 10px;
+      padding: 2px 0;
+    }
+    .orch-files-container::-webkit-scrollbar { width: 4px; }
+    .orch-files-container::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+    .orch-files-hint {
+      margin: 0; padding: 12px 10px;
+      font-family: 'Courier Prime', monospace; font-size: 11px;
+      color: var(--noir-muted); line-height: 1.55;
+      background: rgba(0,0,0,0.15);
+      border: 1px dashed var(--noir-border);
+      border-radius: 8px;
+    }
+    .orch-files-hint code { font-size: 10px; color: var(--noir-dim); }
     .artifact-card {
-      flex: 1; display: flex; align-items: center; gap: 12px;
+      display: flex; align-items: center; gap: 12px;
       padding: 12px 14px; background: var(--noir-surface);
       border: 1px solid var(--noir-border); border-radius: 8px;
       cursor: pointer; transition: border-color 160ms, background 160ms, transform 160ms;
       min-height: 60px;
+    }
+    .orch-output .artifact-card {
+      flex: 0 0 auto;
+      margin-top: 8px;
     }
     .artifact-card:hover { border-color: var(--noir-border-hi); background: rgba(255,255,255,0.03); }
     .artifact-card:active { transform: scale(0.99); }
@@ -319,7 +371,7 @@
       line-height: 1.65; color: var(--noir-text);
       white-space: pre-wrap; word-break: break-word;
     }
-    /* 文件列表区域 */
+    /* 文件输出区域 */
     .orch-files-section {
       margin-bottom: 16px; padding-bottom: 16px;
       border-bottom: 1px solid var(--noir-border);
@@ -334,23 +386,82 @@
       color: var(--noir-dim);
     }
     .orch-files-actions { display: flex; gap: 6px; }
+
+    /* 文件夹卡片 */
+    .orch-folder-card {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 14px; margin-bottom: 8px;
+      background: rgba(139,0,0,0.06); border: 1px solid rgba(139,0,0,0.25);
+      border-radius: 8px; cursor: pointer;
+      transition: all 180ms;
+      user-select: none;
+    }
+    .orch-folder-card:hover {
+      background: rgba(139,0,0,0.10); border-color: rgba(139,0,0,0.5);
+    }
+    .orch-folder-card.open {
+      background: rgba(139,0,0,0.10); border-color: rgba(139,0,0,0.45);
+      border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+      margin-bottom: 0;
+    }
+    .orch-folder-icon {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: rgba(139,0,0,0.18); border: 1px solid rgba(139,0,0,0.35);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; flex-shrink: 0;
+    }
+    .orch-folder-info { flex: 1; min-width: 0; }
+    .orch-folder-name {
+      font-family: 'Courier Prime', monospace; font-size: 13px;
+      font-weight: 700; color: var(--noir-text);
+    }
+    .orch-folder-meta {
+      font-family: 'Courier Prime', monospace; font-size: 10px;
+      color: var(--noir-muted); margin-top: 3px;
+    }
+    .orch-folder-chevron {
+      font-size: 18px; color: var(--noir-dim);
+      transition: transform 200ms;
+      flex-shrink: 0;
+    }
+    .orch-folder-card.open .orch-folder-chevron { transform: rotate(90deg); }
+
+    /* 文件列表（展开区域）*/
+    .orch-file-list {
+      background: rgba(0,0,0,0.15);
+      border: 1px solid rgba(139,0,0,0.25);
+      border-top: none;
+      border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+      margin-bottom: 10px; overflow: hidden;
+    }
     .orch-file-item {
       display: flex; align-items: center; gap: 10px;
-      padding: 8px 10px; margin-bottom: 6px;
-      background: var(--noir-surface); border: 1px solid var(--noir-border);
-      border-radius: 7px; transition: border-color 150ms;
+      padding: 9px 14px 9px 62px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      transition: background 120ms;
     }
-    .orch-file-item:hover { border-color: var(--noir-border-hi); }
+    .orch-file-item:last-child { border-bottom: none; }
+    .orch-file-item:hover { background: rgba(255,255,255,0.04); }
     .orch-file-icon {
-      width: 30px; height: 30px; border-radius: 6px;
+      width: 28px; height: 28px; border-radius: 5px;
       display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0; font-size: 14px;
+      flex-shrink: 0; font-size: 13px;
     }
-    .orch-file-icon.code   { background: rgba(52,211,153,0.15); }
-    .orch-file-icon.html   { background: rgba(251,191,36,0.15); }
-    .orch-file-icon.markdown { background: rgba(147,197,253,0.15); }
-    .orch-file-icon.data   { background: rgba(167,139,250,0.15); }
-    .orch-file-icon.other  { background: rgba(148,163,184,0.15); }
+    .orch-file-icon.code     { background: rgba(52,211,153,0.18); }
+    .orch-file-icon.html     { background: rgba(251,191,36,0.18); }
+    .orch-file-icon.markdown { background: rgba(147,197,253,0.18); }
+    .orch-file-icon.data     { background: rgba(167,139,250,0.18); }
+    .orch-file-icon.doc      { background: rgba(251,146,60,0.18); }
+    .orch-file-icon.report   { background: rgba(251,113,133,0.18); }
+    .orch-file-icon.image    { background: rgba(96,165,250,0.18); }
+    .orch-file-icon.other    { background: rgba(148,163,184,0.15); }
+    /* 文件类型分组标签 */
+    .orch-file-group-label {
+      padding: 6px 14px 4px 62px;
+      font-family: 'Courier Prime', monospace; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      color: #555; border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
     .orch-file-info { flex: 1; min-width: 0; }
     .orch-file-name {
       font-family: 'Courier Prime', monospace; font-size: 12px;
@@ -379,7 +490,7 @@
     }
     .orch-file-modal-backdrop.open { opacity: 1; visibility: visible; }
     .orch-file-modal {
-      width: min(85vw, 1000px); max-height: 85vh;
+      width: min(85vw, 1100px); max-height: 88vh;
       background: var(--noir-card); border: 1px solid var(--noir-border);
       border-radius: 12px; display: flex; flex-direction: column;
     }
@@ -395,14 +506,50 @@
     .orch-file-modal-meta { font-size: 10px; color: var(--noir-muted); margin-top: 2px; }
     .orch-file-modal-actions { display: flex; gap: 8px; }
     .orch-file-modal-body {
-      flex: 1; min-height: 0; overflow: auto; padding: 16px 18px;
+      flex: 1; min-height: 0; overflow: auto; padding: 0;
     }
-    .orch-file-modal-body::-webkit-scrollbar { width: 6px; }
-    .orch-file-modal-body::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
-    .orch-file-modal-pre {
-      margin: 0; font-family: 'Courier Prime', monospace; font-size: 12px;
-      line-height: 1.65; color: var(--noir-text);
-      white-space: pre-wrap; word-break: break-word;
+    .orch-file-modal-body::-webkit-scrollbar { width: 7px; height: 7px; }
+    .orch-file-modal-body::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+    .orch-file-modal-body::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+
+    /* 语法高亮代码区 */
+    .orch-code-view {
+      display: flex; align-items: flex-start;
+      min-height: 200px;
+    }
+    .orch-code-linenums {
+      flex-shrink: 0; padding: 16px 12px;
+      font-family: 'Courier Prime', monospace; font-size: 12px;
+      line-height: 1.65; color: #444; text-align: right;
+      user-select: none; min-width: 40px;
+      background: rgba(0,0,0,0.2);
+      border-right: 1px solid rgba(255,255,255,0.05);
+    }
+    .orch-code-content {
+      flex: 1; padding: 16px 20px;
+      font-family: 'Courier Prime', 'Fira Code', monospace; font-size: 12px;
+      line-height: 1.65; color: #d4d4d4;
+      white-space: pre-wrap; word-break: break-all;
+      overflow: visible;
+    }
+    /* Markdown 预览 */
+    .orch-md-preview {
+      padding: 16px 20px;
+      font-family: var(--font-sans); font-size: 13px; line-height: 1.75;
+      color: var(--noir-text); max-width: 700px;
+    }
+    .orch-md-preview h1,.orch-md-preview h2,.orch-md-preview h3 {
+      color: #d4d4d4; margin: 1.2em 0 0.4em;
+    }
+    .orch-md-preview code {
+      font-family: 'Courier Prime', monospace; font-size: 12px;
+      background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 3px;
+    }
+    .orch-md-preview pre { background: rgba(0,0,0,0.2); padding: 12px; border-radius: 6px; overflow-x: auto; }
+    .orch-md-preview pre code { background: none; padding: 0; }
+    .orch-md-preview table { border-collapse: collapse; width: 100%; }
+    .orch-md-preview td,.orch-md-preview th {
+      border: 1px solid #333; padding: 6px 10px; font-size: 12px;
     }
     .orch-file-modal-close {
       width: 32px; height: 32px; border-radius: 6px; border: none;
@@ -410,6 +557,13 @@
       line-height: 1; cursor: pointer;
     }
     .orch-file-modal-close:hover { color: var(--noir-text); }
+
+    /* 加载中 */
+    .orch-file-loading {
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 40px; color: var(--noir-muted);
+      font-family: 'Courier Prime', monospace; font-size: 12px;
+    }
     .orch-empty {
       display: flex; flex-direction: column; align-items: center;
       justify-content: center; flex: 1; color: var(--noir-muted);
@@ -519,35 +673,45 @@ var ORCHESTRATE_CONTENT = [
 
       '<div style="flex:1 1 0;display:flex;flex-direction:column;gap:10px;min-height:0;">',
 
-        '<div class="orch-card orch-eval">',
-          '<div class="orch-card-title">// 评价</div>',
-          '<div class="resultquality-row" id="resultquality-row" style="display:none">',
-            '<div class="quality-bar-wrap"><div class="quality-bar" id="quality-bar"></div></div>',
-            '<span class="quality-score-label" id="quality-score-label">0.0</span>',
-            '<span class="result-badge" id="result-badge"></span>',
-          '</div>',
-          '<div class="eval-meta" id="eval-meta">',
-            '<div>循环次数：<span id="eval-loop">&#8212;</span></div>',
-            '<div>自修复尝试：<span id="eval-heal">&#8212;</span></div>',
-          '</div>',
-          '<div class="orch-empty" id="eval-empty" style="min-height:40px;padding:10px 0;">',
-            '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>完成后显示质量评价',
-          '</div>',
-        '</div>',
+        '<div class="orch-bottom-row">',
 
-        '<div class="orch-card orch-output">',
-          '<div class="orch-card-title">// 输出结果</div>',
-          '<div class="artifact-card disabled" id="artifact-card" role="button" tabindex="0" onclick="openResultDrawer()" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openResultDrawer();}">',
-            '<div class="artifact-icon">',
-              '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+          '<div class="orch-eval-col">',
+            '<div class="orch-card orch-eval">',
+              '<div class="orch-card-title">// 评价</div>',
+              '<div class="resultquality-row" id="resultquality-row" style="display:none">',
+                '<div class="quality-bar-wrap"><div class="quality-bar" id="quality-bar"></div></div>',
+                '<span class="quality-score-label" id="quality-score-label">0.0</span>',
+                '<span class="result-badge" id="result-badge"></span>',
+              '</div>',
+              '<div class="eval-meta" id="eval-meta">',
+                '<div>循环次数：<span id="eval-loop">&#8212;</span></div>',
+                '<div>自修复尝试：<span id="eval-heal">&#8212;</span></div>',
+              '</div>',
+              '<div class="orch-empty" id="eval-empty" style="min-height:40px;padding:10px 0;">',
+                '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>完成后显示质量评价',
+              '</div>',
             '</div>',
-            '<div class="artifact-text">',
-              '<div class="artifact-title" id="artifact-title">编排汇总报告</div>',
-              '<div class="artifact-preview" id="artifact-preview">等待任务完成&#8230;</div>',
-            '</div>',
-            '<span class="artifact-chevron">&#8250;</span>',
           '</div>',
-          '<div id="orch-files-area" style="display:none;margin-top:10px;"></div>',
+
+          '<div class="orch-output-col">',
+            '<div class="orch-card orch-output">',
+              '<div class="orch-card-title">// 输出结果</div>',
+              '<div id="orch-files-area" class="orch-files-container">',
+                '<p class="orch-files-hint" id="orch-files-placeholder">任务完成后，<code>outputs/&lt;plan_id&gt;/</code> 下的产出文件将显示在此，可展开预览 .py / .html / .md 等。</p>',
+              '</div>',
+              '<div class="artifact-card disabled" id="artifact-card" role="button" tabindex="0" onclick="openResultDrawer()" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openResultDrawer();}">',
+                '<div class="artifact-icon">',
+                  '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+                '</div>',
+                '<div class="artifact-text">',
+                  '<div class="artifact-title" id="artifact-title">编排汇总报告</div>',
+                  '<div class="artifact-preview" id="artifact-preview">等待任务完成&#8230;</div>',
+                '</div>',
+                '<span class="artifact-chevron">&#8250;</span>',
+              '</div>',
+            '</div>',
+          '</div>',
+
         '</div>',
 
       '</div>',
@@ -579,7 +743,7 @@ var ORCHESTRATE_CONTENT = [
         '</div>',
       '</div>',
       '<div class="orch-file-modal-body">',
-        '<pre class="orch-file-modal-pre" id="orch-file-modal-content"></pre>',
+        '<div id="orch-file-modal-content"></div>',
       '</div>',
     '</div>',
   '</div>',
@@ -885,6 +1049,9 @@ function startNewJob() {
 }
 
 function selectJob(jobId) {
+  // #region agent log — 最低层埋点：selectJob 入口
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H3',location:'orchestrate.html:selectJob',message:'selectJob',data:{jobId:String(jobId||'')},timestamp:Date.now()})}).catch(function(){});
+  // #endregion
   if (_selectedJobId && _streamReaders[_selectedJobId]) {
     _streamReaders[_selectedJobId].cancelFn();
     delete _streamReaders[_selectedJobId];
@@ -898,6 +1065,9 @@ function fetchJobAndStream(jobId) {
   fetch('/api/orchestrate/jobs/' + encodeURIComponent(jobId))
     .then(function(r) { return r.json(); })
     .then(function(job) {
+      // #region agent log — API 回调最开头（零分支）
+      fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H3',location:'orchestrate.html:fetchThen',message:'fetchThen_top',data:{jobId:String(jobId||''),status:job.status,hasResult:!!job.result,nFiles:job.result&&Array.isArray(job.result.files)?job.result.files.length:typeof job.result&&job.result!==null?'obj_'+Object.keys(job.result||{}).length:'none'},timestamp:Date.now()})}).catch(function(){});
+      // #endregion
       if (job.error) { console.error(job.error); return; }
       var ph = document.getElementById('progress-header');
       if (ph) ph.style.display = '';
@@ -906,7 +1076,18 @@ function fetchJobAndStream(jobId) {
       if (job.events && job.events.length) {
         for (var i = 0; i < job.events.length; i++) handleJobEvent(jobId, job.events[i].type, job.events[i].data);
       }
-      if (job.status === 'done' && job.result)     onFinalResult(job.result);
+      // #region agent log — 诊断 API 返回的 job 完整结构
+      fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H3',location:'orchestrate.html:fetchJobThen',message:'API job payload',data:{status:job.status,hasResult:!!job.result,resultKeys:job.result?Object.keys(job.result):[],nFiles:job.result&&job.result.files?(Array.isArray(job.result.files)?job.result.files.length:'notArray_'+typeof job.result.files):'noFiles',jobId:jobId},timestamp:Date.now()})}).catch(function(){});
+      // #endregion
+
+      // 对已完成任务：直接调用 onFinalResult（不管 SSE 是否已关闭）
+      if (job.status === 'done' && job.result) {
+        // #region agent log
+        var _jr = job.result;
+        fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H3',location:'orchestrate.html:fetchJobAndStream',message:'before onFinalResult(job.result)',data:{keys:Object.keys(_jr||{}),filesLen:Array.isArray(_jr&&_jr.files)?_jr.files.length:String(typeof(_jr&&_jr.files))},timestamp:Date.now()})}).catch(function(){});
+        // #endregion
+        onFinalResult(job.result);
+      }
       if (job.status === 'failed')                  onJobDone('failed');
       if (job.status === 'cancelled')                onJobDone('cancelled');
       if (job.status === 'pending' || job.status === 'running') openJobStream(jobId);
@@ -1009,6 +1190,11 @@ function renderJobList(jobs) {
 function handleJobEvent(jobId, eventType, data) {
   if (jobId !== _selectedJobId) return;
   var d = (data && data.data !== undefined) ? data.data : (data || {});
+  // #region agent log
+  if (eventType === 'final_result') {
+    fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H4',location:'orchestrate.html:handleJobEvent',message:'final_result unwrap',data:{topKeys:Object.keys(data||{}),dKeys:Object.keys(d||{}),dFilesLen:Array.isArray(d&&d.files)?d.files.length:'na'},timestamp:Date.now()})}).catch(function(){});
+  }
+  // #endregion
   switch (eventType) {
     case 'supervisor_plan':    onSupervisorPlan(d);   break;
     case 'worker_start':      onWorkerStart(d);     break;
@@ -1128,6 +1314,10 @@ function copyDrawerResult() {
 }
 
 function onFinalResult(d) {
+  // #region agent log
+  window._orchDbgFr = (window._orchDbgFr || 0) + 1;
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H3',location:'orchestrate.html:onFinalResult',message:'onFinalResult',data:{callN:window._orchDbgFr,keys:Object.keys(d||{}),filesIsArray:Array.isArray(d&&d.files),filesLen:Array.isArray(d&&d.files)?d.files.length:String(typeof(d&&d.files)),stackSnippet:(new Error()).stack?String((new Error()).stack).split('\n').slice(1,4).join('|'):''},timestamp:Date.now()})}).catch(function(){});
+  // #endregion
   if (_orchHasStepId('self_heal')) {
     for (var si = 0; si < _steps.length; si++) {
       if (_steps[si].id === 'self_heal' && (_steps[si].status === 'pending' || _steps[si].status === 'active')) {
@@ -1179,24 +1369,28 @@ function onFinalResult(d) {
 
 // ── 文件列表渲染 ──────────────────────────────────────────────────────────
 var _currentModalFile = null; // 当前预览的文件信息
+var _expandedFolder = null;   // 当前展开的文件夹 plan_id
 
 function _renderFileList(d, jobId) {
   var files = d.files || [];
   var outputDir = d.output_dir || '';
+  var planId = d.plan_id || '';
   var area = document.getElementById('orch-files-area');
   if (!area) return;
 
+  // #region agent log
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H4',location:'orchestrate.html:_renderFileList',message:'render file list',data:{jobId:String(jobId||''),n:files.length,dHasFiles:Object.prototype.hasOwnProperty.call(d||{},'files'),rawFilesType:typeof(d&&d.files)},timestamp:Date.now()})}).catch(function(){});
+  // #endregion
+
   if (!files || files.length === 0) {
-    area.style.display = 'none';
+    area.innerHTML = '<p class="orch-files-hint" id="orch-files-placeholder">\u4efb\u52a1\u5b8c\u6210\u540e\uff0c<code>outputs/&lt;plan_id&gt;/</code> \u4e0b\u7684\u4ea7\u51fa\u6587\u4ef6\u5c06\u663e\u793a\u5728\u6b64\uff0c\u53ef\u5c55\u5f00\u9884\u89c8 .py / .html / .md \u7b49\u3002</p>';
     return;
   }
 
-  area.style.display = '';
-
-  // Header with download-all button
+  // ── 全局操作栏 ──────────────────────────────────────────────────────
   var html = '<div class="orch-files-section">';
   html += '<div class="orch-files-header">';
-  html += '<span class="orch-files-title">&#x1F4C2; 产出文件 (' + files.length + ')</span>';
+  html += '<span class="orch-files-title">&#x1F4C2; 产出文件夹</span>';
   html += '<div class="orch-files-actions">';
   html += '<button type="button" class="orch-file-btn" onclick="downloadAllFiles(\'' + encodeURIComponent(jobId || '') + '\')">打包下载</button>';
   if (outputDir) {
@@ -1204,36 +1398,133 @@ function _renderFileList(d, jobId) {
   }
   html += '</div></div>';
 
-  // File items
-  for (var i = 0; i < files.length; i++) {
-    var f = files[i];
-    var fname = f.filename || '?';
-    var ftype = f.file_type || 'other';
-    var size = f.size_display || f.size_bytes + 'B';
-    var agent = f.agent_id || '';
-    var desc = f.description || '';
-    var fpath = f.file_path || '';
-    var previewable = ftype === 'code' || ftype === 'html' || ftype === 'markdown' || ftype === 'data';
+  // ── 文件夹卡片 ───────────────────────────────────────────────────────
+  // 统计各类型文件
+  var codeFiles = files.filter(function(f){ return f.file_type === 'code'; });
+  var htmlFiles = files.filter(function(f){ return f.file_type === 'html'; });
+  var mdFiles   = files.filter(function(f){ return f.file_type === 'markdown'; });
+  var dataFiles = files.filter(function(f){ return f.file_type === 'data'; });
+  var otherFiles = files.filter(function(f){
+    return !['code','html','markdown','data'].includes(f.file_type);
+  });
 
-    html += '<div class="orch-file-item">';
-    html += '<div class="orch-file-icon ' + ftype + '">';
-    html += _fileTypeIcon(ftype);
-    html += '</div>';
-    html += '<div class="orch-file-info">';
-    html += '<div class="orch-file-name" title="' + _escHtml(fname) + '">' + _escHtml(fname) + '</div>';
-    html += '<div class="orch-file-meta">' + size + ' \u00B7 ' + agent + (desc ? ' \u00B7 ' + _escHtml(desc.substring(0, 40)) : '') + '</div>';
-    html += '</div>';
-    html += '<div class="orch-file-btns">';
-    if (previewable) {
-      html += '<button type="button" class="orch-file-btn preview" onclick="previewFile(\'' + encodeURIComponent(jobId || '') + '\',\'' + encodeURIComponent(fname) + '\')">预览</button>';
+  var folderName = 'outputs/' + (planId || jobId || 'result');
+  var totalSize = files.reduce(function(s,f){ return s + (f.size_bytes || 0); }, 0);
+
+  html += '<div class="orch-folder-card" id="orch-folder-card" ';
+  html += 'onclick="toggleFolderCard()" role="button" tabindex="0" ';
+  html += 'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();toggleFolderCard();}">';
+  html += '<div class="orch-folder-icon">&#x1F4C1;</div>';
+  html += '<div class="orch-folder-info">';
+  html += '<div class="orch-folder-name">' + _escHtml(folderName) + '</div>';
+  var metaParts = [files.length + ' 个文件'];
+  if (codeFiles.length > 0) metaParts.push(codeFiles.length + ' 代码');
+  if (htmlFiles.length > 0) metaParts.push(htmlFiles.length + ' 网页');
+  if (mdFiles.length > 0)   metaParts.push(mdFiles.length + ' 文档');
+  if (dataFiles.length > 0) metaParts.push(dataFiles.length + ' 数据');
+  html += '<div class="orch-folder-meta">' + metaParts.join(' \u00B7 ') + ' \u00B7 ' + _formatSize(totalSize) + '</div>';
+  html += '</div>';
+  html += '<div class="orch-folder-chevron" id="orch-folder-chevron">&#8250;</div>';
+  html += '</div>';
+
+  // ── 文件列表（折叠区）────────────────────────────────────────────────
+  html += '<div class="orch-file-list" id="orch-file-list" style="display:none;">';
+
+  // 代码文件区
+  if (codeFiles.length > 0) {
+    html += '<div class="orch-file-group-label">\u2699 代码文件</div>';
+    for (var i = 0; i < codeFiles.length; i++) {
+      html += _renderFileItem(codeFiles[i], jobId, true);
     }
-    html += '<button type="button" class="orch-file-btn" onclick="downloadFile(\'' + encodeURIComponent(jobId || '') + '\',\'' + encodeURIComponent(fname) + '\')">下载</button>';
-    html += '</div>';
-    html += '</div>';
+  }
+  // HTML 文件区
+  if (htmlFiles.length > 0) {
+    html += '<div class="orch-file-group-label">\u2699 网页 / 前端</div>';
+    for (var i = 0; i < htmlFiles.length; i++) {
+      html += _renderFileItem(htmlFiles[i], jobId, true);
+    }
+  }
+  // Markdown 文件区
+  if (mdFiles.length > 0) {
+    html += '<div class="orch-file-group-label">\u2699 文档</div>';
+    for (var i = 0; i < mdFiles.length; i++) {
+      html += _renderFileItem(mdFiles[i], jobId, true);
+    }
+  }
+  // 数据文件区
+  if (dataFiles.length > 0) {
+    html += '<div class="orch-file-group-label">\u2699 数据文件</div>';
+    for (var i = 0; i < dataFiles.length; i++) {
+      html += _renderFileItem(dataFiles[i], jobId, true);
+    }
+  }
+  // 其他文件
+  if (otherFiles.length > 0) {
+    for (var i = 0; i < otherFiles.length; i++) {
+      html += _renderFileItem(otherFiles[i], jobId, true);
+    }
   }
 
-  html += '</div>';
+  html += '</div>'; // end .orch-file-list
+  html += '</div>'; // end .orch-files-section
+
   area.innerHTML = html;
+  area.dataset.planId = planId || '';
+  area.dataset.jobId = jobId || '';
+
+  // 如果之前有展开状态，保持展开
+  if (_expandedFolder === (planId || jobId)) {
+    expandFolderCard();
+  }
+}
+
+function _renderFileItem(f, jobId, previewable) {
+  var fname = f.filename || '?';
+  var ftype = f.file_type || 'other';
+  var size = f.size_display || _formatSize(f.size_bytes || 0);
+  var agent = f.agent_id || '';
+  var desc = f.description || '';
+  var pr = previewable !== false && (ftype === 'code' || ftype === 'html' || ftype === 'markdown' || ftype === 'data');
+
+  var html = '<div class="orch-file-item">';
+  html += '<div class="orch-file-icon ' + ftype + '">' + _fileTypeIcon(ftype) + '</div>';
+  html += '<div class="orch-file-info">';
+  html += '<div class="orch-file-name" title="' + _escHtml(fname) + '">' + _escHtml(fname) + '</div>';
+  html += '<div class="orch-file-meta">' + _escHtml(size) + (agent ? ' \u00B7 ' + _escHtml(agent) : '') + '</div>';
+  html += '</div>';
+  html += '<div class="orch-file-btns">';
+  if (pr) {
+    html += '<button type="button" class="orch-file-btn preview" onclick="previewFile(\'' + encodeURIComponent(jobId || '') + '\',\'' + encodeURIComponent(fname) + '\')">\u256F\u25CF\u25A0 \u9884\u89C8</button>';
+  }
+  html += '<button type="button" class="orch-file-btn" onclick="downloadFile(\'' + encodeURIComponent(jobId || '') + '\',\'' + encodeURIComponent(fname) + '\')">\u2193 \u4E0B\u8F7D</button>';
+  html += '</div></div>';
+  return html;
+}
+
+function toggleFolderCard() {
+  var list = document.getElementById('orch-file-list');
+  var card = document.getElementById('orch-folder-card');
+  var chev = document.getElementById('orch-folder-chevron');
+  if (!list || !card) return;
+  var isOpen = list.style.display !== 'none';
+  if (isOpen) {
+    list.style.display = 'none';
+    card.classList.remove('open');
+    _expandedFolder = null;
+  } else {
+    expandFolderCard();
+  }
+}
+
+function expandFolderCard() {
+  var list = document.getElementById('orch-file-list');
+  var card = document.getElementById('orch-folder-card');
+  if (!list || !card) return;
+  list.style.display = '';
+  card.classList.add('open');
+  // 记录当前展开（从 data 属性或文件数据取 plan_id）
+  var area = document.getElementById('orch-files-area');
+  _expandedFolder = area ? (area.dataset.planId || area.dataset.jobId || 'expanded') : 'expanded';
 }
 
 function _fileTypeIcon(ftype) {
@@ -1279,20 +1570,72 @@ function openFileModal(fname, content, ftype, size) {
 
   if (nameEl) nameEl.textContent = fname;
   if (metaEl) metaEl.textContent = _formatSize(size) + ' \u00B7 ' + ftype;
+
   if (contentEl) {
-    contentEl.textContent = content;
-    // 代码高亮提示
-    if (ftype === 'code') {
-      contentEl.style.background = 'rgba(0,0,0,0.2)';
-      contentEl.style.padding = '12px';
-      contentEl.style.borderRadius = '6px';
+    if (ftype === 'markdown') {
+      // Markdown 直接渲染
+      contentEl.innerHTML = '';
+      contentEl.outerHTML = contentEl.outerHTML; // reset
+      // 重新获取
+      contentEl = document.getElementById('orch-file-modal-content');
+      if (contentEl) {
+        contentEl.className = 'orch-md-preview';
+        contentEl.innerHTML = _renderMarkdown(content);
+      }
     } else {
-      contentEl.style.background = '';
-      contentEl.style.padding = '';
-      contentEl.style.borderRadius = '';
+      // 代码：语法高亮 + 行号
+      contentEl.innerHTML = '';
+      contentEl.outerHTML = contentEl.outerHTML;
+      contentEl = document.getElementById('orch-file-modal-content');
+      if (contentEl) {
+        contentEl.className = '';
+        var lines = (content || '').split('\n');
+        var totalLines = lines.length;
+        var lineNumWidth = String(totalLines).length;
+        var lineHtml = '';
+        var codeHtml = '';
+        for (var li = 0; li < lines.length; li++) {
+          var ln = String(li + 1).padStart(lineNumWidth, '\u2007');
+          lineHtml += '<div>' + ln + '</div>';
+          codeHtml += '<div>' + _escHtml(lines[li] || '') + '</div>';
+        }
+        contentEl.innerHTML = ''
+          + '<div class="orch-code-view">'
+          + '<div class="orch-code-linenums">' + lineHtml + '</div>'
+          + '<div class="orch-code-content">' + codeHtml + '</div>'
+          + '</div>';
+      }
     }
   }
+
   backdrop.classList.add('open');
+}
+
+// 极简 Markdown -> HTML 转换
+function _renderMarkdown(md) {
+  if (!md) return '';
+  var html = _escHtml(md);
+  // 代码块
+  html = html.replace(/&lt;code&gt;([\s\S]*?)&lt;\/code&gt;/g, '<code>$1</code>');
+  // 行内代码
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // 标题
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  // 粗体
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // 链接
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  // 列表
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+  // 段落
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = '<p>' + html + '</p>';
+  // 清理空段落
+  html = html.replace(/<p><\/p>/g, '');
+  return html;
 }
 
 function closeFileModal() {
@@ -1468,7 +1811,11 @@ function clearResult() {
   if (ac) ac.classList.add('disabled');
   // 清空文件列表
   var filesArea = document.getElementById('orch-files-area');
-  if (filesArea) { filesArea.style.display = 'none'; filesArea.innerHTML = ''; }
+  if (filesArea) {
+    filesArea.innerHTML = '<p class="orch-files-hint" id="orch-files-placeholder">\u4efb\u52a1\u5b8c\u6210\u540e\uff0c<code>outputs/&lt;plan_id&gt;/</code> \u4e0b\u7684\u4ea7\u51fa\u6587\u4ef6\u5c06\u663e\u793a\u5728\u6b64\uff0c\u53ef\u5c55\u5f00\u9884\u89c8 .py / .html / .md \u7b49\u3002</p>';
+    delete filesArea.dataset.planId;
+    delete filesArea.dataset.jobId;
+  }
   closeFileModal();
 }
 

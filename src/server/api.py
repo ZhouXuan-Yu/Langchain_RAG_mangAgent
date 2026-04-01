@@ -1433,11 +1433,15 @@ async def download_all_orch_files(job_id: str) -> StreamingResponse:
 
     plan_id = ""
     if job.result:
-        summary = job.result.get("summary", "")
-        import re
-        match = re.search(r"计划ID[:：]\s*([^\s\n]+)", summary)
-        if match:
-            plan_id = match.group(1)
+        # 直接从 result 字典读取（最可靠）
+        plan_id = job.result.get("plan_id", "")
+        if not plan_id:
+            # 向后兼容：从 summary 文本正则提取
+            summary = job.result.get("summary", "")
+            import re
+            match = re.search(r"计划ID[:：]\s*([^\s\n]+)", summary)
+            if match:
+                plan_id = match.group(1)
 
     if not plan_id:
         raise HTTPException(status_code=404, detail="No plan_id found")

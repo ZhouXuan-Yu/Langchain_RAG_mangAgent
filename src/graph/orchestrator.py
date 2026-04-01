@@ -305,6 +305,24 @@ class CrayfishOrchestrator:
         # 构建汇总报告
         final_result = self._build_final_result(all_results, overall_quality, passed, output_mgr=output_mgr, requirement=requirement)
 
+        # #region agent log
+        try:
+            _dbg_p = __import__("pathlib").Path(__file__).resolve().parents[2] / "debug-6ba534.log"
+            _fl = final_result.get("files") or []
+            _dbg_payload = {
+                "sessionId": "6ba534", "hypothesisId": "H1", "location": "orchestrator.py:post_build",
+                "message": "_build_final_result", "timestamp": int(__import__("time").time() * 1000),
+                "data": {
+                    "plan_id": final_result.get("plan_id"),
+                    "n_files": len(_fl) if isinstance(_fl, list) else repr(type(_fl)),
+                    "output_dir_len": len((final_result.get("output_dir") or "")),
+                },
+            }
+            _dbg_p.open("a", encoding="utf-8").write(json.dumps(_dbg_payload, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
         await self._emit(progress_callback, {
             "type": "final_result",
             "summary": final_result["summary"],
@@ -312,6 +330,11 @@ class CrayfishOrchestrator:
             "passed": passed,
             "loop_count": self.loop_count,
             "healing_attempts": healing_attempts,
+            # 前端产出文件夹 UI 依赖以下字段（须与 _build_final_result 返回一致）
+            "plan_id": final_result.get("plan_id", self.plan_id),
+            "output_dir": final_result.get("output_dir", ""),
+            "files": final_result.get("files", []),
+            "summary_file": final_result.get("summary_file"),
         })
 
         return final_result
@@ -433,20 +456,24 @@ class CrayfishOrchestrator:
                 for t in tasks:
                     task_id = t.get("task_id", f"task_{uuid.uuid4().hex[:6]}")
                     agent_id = t.get("assigned_agent", "")
-                    wk = None
-                    norm_id = _short_map.get(agent_id, agent_id)
-                    p = _all_participants.get(agent_id) or _all_participants.get(norm_id)
-                    if p:
-                        wk = p.get("worker_kind")
-                    else:
-                        wk = _short_map.get(agent_id)
-                        if wk:
-                            norm_id = wk
-                        p = _all_participants.get(wk) if wk else None
-                    builtin_kinds = {"search_worker", "rag_worker", "coder"}
+                    wk = t.get("worker_kind")  # 优先使用 LLM 直接输出的 worker_kind
+                    norm_id = agent_id
+
+                    if not wk:
+                        # LLM 未指定 worker_kind，走原有推断逻辑
+                        norm_id = _short_map.get(agent_id, agent_id)
+                        p = _all_participants.get(agent_id) or _all_participants.get(norm_id)
+                        if p:
+                            wk = p.get("worker_kind")
+                        else:
+                            wk = _short_map.get(agent_id)
+                            if wk:
+                                norm_id = wk
+                            p = _all_participants.get(wk) if wk else None
+                    # 验证：wk 必须属于 enabled_kinds（排除 LLM 发明的不匹配 agent）
                     if wk and wk not in enabled_kinds:
                         if wk in builtin_kinds:
-                            logger.warning(f"[orchestrator] plan assigned unknown builtin {agent_id} ({wk}), skipping")
+                            logger.warning("[orchestrator] plan assigned unknown builtin %s (%s), skipping", agent_id, wk)
                             continue
                     depends_on = t.get("depends_on") or []
                     execution_mode = t.get("execution_mode") or "parallel"
@@ -579,6 +606,45 @@ class CrayfishOrchestrator:
         task_id = task["task_id"]
         agent_id = task["assigned_agent"]
         wk = task.get("worker_kind") or ""
+
+        # 兜底：当 LLM 生成的 assigned_agent 不存在于 registry 但任务类型明确时，
+        # 通过 registry 的 worker_kind 查找来推断正确的 worker_kind 并直接路由到内置 Worker。
+        if not wk:
+            from src.multi_agent.orchestrator import get_agent_registry
+            reg = get_agent_registry()
+            _short_map = {
+                "agent_worker_search": "search_worker",
+                "agent_worker_rag":    "rag_worker",
+                "agent_worker_coder": "coder",
+            }
+            if agent_id in _short_map:
+                wk = _short_map[agent_id]
+                logger.info("[orchestrator] task %s: inferred worker_kind=%s from short_map (agent_id=%s)", task_id, wk, agent_id)
+            else:
+                profile = reg.get(agent_id)
+                if profile and profile.get("worker_kind"):
+                    wk = profile["worker_kind"]
+                    logger.info("[orchestrator] task %s: inferred worker_kind=%s from registry (agent_id=%s)", task_id, wk, agent_id)
+                else:
+                    p = self._participants.get(agent_id)
+                    if p and p.get("worker_kind"):
+                        wk = p["worker_kind"]
+                        logger.info("[orchestrator] task %s: inferred worker_kind=%s from participants (agent_id=%s)", task_id, wk, agent_id)
+                    else:
+                        # LLM 发明了不存在的 agent_id（如 UUID 串），
+                        # 通过任务描述关键词推断 worker_kind
+                        desc_lower = task.get("description", "").lower()
+                        if any(k in desc_lower for k in ["搜索", "search", "查找", "调研", "web", "最新", "2025", "2026"]):
+                            wk = "search_worker"
+                        elif any(k in desc_lower for k in ["记忆", "rag", "知识库", "历史", "项目", "之前", "检索"]):
+                            wk = "rag_worker"
+                        elif any(k in desc_lower for k in ["代码", "code", "生成", "实现", "写", "python", "html", "javascript"]):
+                            wk = "coder"
+                        logger.warning(
+                            "[orchestrator] task %s: invented agent_id=%s not in registry/participants, "
+                            "inferred worker_kind=%s from description keywords",
+                            task_id, agent_id, wk
+                        )
 
         await self._emit(progress_callback, {
             "type": "worker_start",
@@ -724,6 +790,13 @@ class CrayfishOrchestrator:
                 context=context,
             )
 
+            logger.info(
+                "[orchestrator] generic task %s dispatch: status=%s, result_len=%d",
+                task_id,
+                dispatch_result.get("status"),
+                len(dispatch_result.get("result", "")),
+            )
+
             if dispatch_result.get("status") == "ok":
                 raw_result = dispatch_result.get("result", "")
                 quality_score = self._evaluate_generic_quality(raw_result, task["description"])
@@ -745,24 +818,35 @@ class CrayfishOrchestrator:
                     "raw_data": raw_result,
                 }
             else:
+                error_msg = dispatch_result.get("message", "未知错误")
+                quality_score = self._evaluate_generic_quality(error_msg, task["description"])
+
+                await self._emit(progress_callback, {
+                    "type": "worker_progress",
+                    "agent": agent_id,
+                    "task_id": task_id,
+                    "message": f"[{agent_name}] 执行失败: {error_msg[:80]}",
+                })
+
                 return {
                     "task_id": task_id,
                     "agent": agent_id,
-                    "result": f"[调度失败] {dispatch_result.get('message', '未知错误')}",
+                    "result": f"[调度失败] {error_msg}",
                     "confidence": 0.0,
-                    "quality_score": 0.0,
+                    "quality_score": quality_score,
                     "source": "dispatch_error",
-                    "raw_data": dispatch_result.get("message", ""),
+                    "raw_data": error_msg,
                 }
 
         except Exception as e:
             logger.error(f"[orchestrator] generic task {task_id} failed: {e}")
+            quality_score = self._evaluate_generic_quality(str(e), task["description"])
             return {
                 "task_id": task_id,
                 "agent": agent_id,
                 "result": f"[执行异常] {str(e)}",
                 "confidence": 0.0,
-                "quality_score": 0.0,
+                "quality_score": quality_score,
                 "source": "generic_error",
                 "raw_data": str(e),
             }
@@ -772,7 +856,9 @@ class CrayfishOrchestrator:
         评估通用 Agent 结果质量（0-10 分）。
         策略：结果长度 + 结构化程度 + 关键词覆盖 + 错误检测。
         """
-        if not result or len(result) < 10:
+        if not result:
+            return 2.0
+        if len(result) < 10:
             return 2.0
         if any(k in result for k in ["[执行失败]", "[调度失败]", "[异常]", "Error:", "Traceback"]):
             return 3.0

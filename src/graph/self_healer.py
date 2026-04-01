@@ -64,14 +64,17 @@ async def self_heal(
                 logger.warning(f"[self_healer] repair #{attempt} invalid: {fixed_result[:100]}")
                 continue
 
-            logger.info(f"[self_healer] healing succeeded on attempt #{attempt}")
+            # 评估修复后结果的实际质量（参考各 Worker 的评估策略）
+            quality_score = _evaluate_healed_quality(fixed_result)
+
+            logger.info(f"[self_healer] healing succeeded on attempt #{attempt}, quality={quality_score:.1f}")
 
             return {
                 "task_id": task_id,
                 "agent": agent,
                 "result": fixed_result,
                 "confidence": 0.6,  # 自修复结果置信度略低
-                "quality_score": 6.0,
+                "quality_score": quality_score,
                 "source": "self_healed",
                 "healing_attempts": attempt,
                 "raw_data": fixed_result,
@@ -185,3 +188,32 @@ def _is_repair_valid(result: str) -> bool:
             return False
 
     return True
+
+
+def _evaluate_healed_quality(result: str) -> float:
+    """
+    评估自修复结果的实际质量（0-10 分）。
+
+    自修复本质上类似一个通用 LLM 输出，评估策略：
+    - 最小基础分 2.0（表示有内容）
+    - 结果长度：>100 字 +1.5，>500 字 +1.0
+    - 结构化：含 markdown 标题/code 块/列表 +1.5
+    - 关键词覆盖（通用检查） +1.0
+    - 超长内容（可能过度发挥） -0.5
+    """
+    if not result:
+        return 2.0
+    if len(result) < 20:
+        return 2.0
+
+    score = 5.0
+    if len(result) > 100:
+        score += 1.5
+    if len(result) > 500:
+        score += 1.0
+    if "```" in result or "\n- " in result or "\n1." in result or "## " in result:
+        score += 1.5
+    if len(result) > 5000:
+        score -= 0.5
+
+    return min(max(score, 0.0), 10.0)

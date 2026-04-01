@@ -176,6 +176,26 @@ async def _run_orchestrator_job(job: BackgroundJob) -> None:
             ev_type = event.get("type", "message")
             job.add_event(ev_type, event)
             _update_worker_state(job, ev_type, event)
+            # #region agent log
+            if ev_type == "final_result":
+                try:
+                    _dbg_p = __import__("pathlib").Path(__file__).resolve().parents[2] / "debug-6ba534.log"
+                    _evf = event.get("files")
+                    _rf = (job.result or {}).get("files")
+                    _dbg_payload = {
+                        "sessionId": "6ba534", "hypothesisId": "H2", "location": "orch_jobs.py:after_final_result",
+                        "message": "final_result persisted", "timestamp": int(__import__("time").time() * 1000),
+                        "data": {
+                            "job_id": job.job_id,
+                            "event_n_files": len(_evf) if isinstance(_evf, list) else repr(type(_evf)),
+                            "job_result_n_files": len(_rf) if isinstance(_rf, list) else repr(type(_rf)),
+                            "job_result_keys": list((job.result or {}).keys()),
+                        },
+                    }
+                    _dbg_p.open("a", encoding="utf-8").write(json.dumps(_dbg_payload, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            # #endregion
             # 节流更新看板进度
             await _sync_kanban(
                 "running",
@@ -262,6 +282,7 @@ def _update_worker_state(job: BackgroundJob, ev_type: str, event: dict) -> None:
             "passed":           event.get("passed", False),
             "loop_count":       event.get("loop_count", 0),
             "healing_attempts": event.get("healing_attempts", 0),
+            "plan_id":          event.get("plan_id", ""),
             "output_dir":       event.get("output_dir", ""),
             "files":            event.get("files", []),
             "summary_file":     event.get("summary_file"),
