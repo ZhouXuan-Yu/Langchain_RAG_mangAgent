@@ -225,7 +225,18 @@
     .log-agent.supervisor     { color: #c0392b; }
     .log-agent.self_healer   { color: #facc15; }
     .log-agent.system         { color: var(--noir-dim); }
-    .log-msg { color: var(--noir-text); word-break: break-all; font-size: 11px; }
+    .log-msg { color: var(--noir-text); word-break: break-all; font-size: 11px; flex: 1; min-width: 0; }
+    /* P2-D: 层级展开 — 独立一行，与上一条 supervisor 对齐，不嵌套在 .log-msg 内 */
+    .log-entry--hierarchy-expand .log-msg {
+      color: #c0392b;
+      border-left: 2px solid rgba(139,0,0,0.45);
+      padding-left: 10px;
+    }
+    .log-entry--hierarchy-expand[data-depth="0"] .log-msg { margin-left: 0; }
+    .log-entry--hierarchy-expand[data-depth="1"] .log-msg { margin-left: 8px; }
+    .log-entry--hierarchy-expand[data-depth="2"] .log-msg { margin-left: 16px; }
+    .log-entry--hierarchy-expand[data-depth="3"] .log-msg { margin-left: 24px; }
+    .log-entry--hierarchy-meta .log-msg { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
     /* 评价 + 输出：底部一行两列（左评价 / 右产出文件夹） */
     .orch-bottom-row {
       flex: 1 1 0;
@@ -585,6 +596,41 @@
       border-radius: 50%; animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to{transform:rotate(360deg)} }
+    /* ── P2-D: 层级编排缩进样式 ─────────────────────── */
+    .step-item[data-depth="1"] { margin-left: 16px; border-left: 2px solid rgba(139,0,0,0.4); }
+    .step-item[data-depth="2"] { margin-left: 32px; border-left: 2px solid rgba(139,0,0,0.6); }
+    .step-item[data-depth="3"] { margin-left: 48px; border-left: 2px solid rgba(139,0,0,0.8); }
+    .step-item[data-depth="4"] { margin-left: 64px; border-left: 2px solid rgba(200,0,0,1.0); }
+    .hierarchy-badge {
+      display: inline-block; font-family: 'Courier Prime', monospace;
+      font-size: 9px; padding: 1px 5px; border-radius: 3px;
+      background: rgba(139,0,0,0.2); color: #c0392b;
+      margin-left: 4px; vertical-align: middle;
+    }
+    .hierarchy-expand-msg {
+      font-family: 'Courier Prime', monospace; font-size: 11px;
+      color: var(--noir-accent); padding: 3px 8px;
+      border-left: 2px solid rgba(139,0,0,0.5); margin: 2px 0;
+      background: rgba(139,0,0,0.05); border-radius: 0 4px 4px 0;
+    }
+    /* ── P2-A: 历史经验面板 ─────────────────────────── */
+    .history-panel { display: flex; flex-direction: column; gap: 0; }
+    .history-header {
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none; padding-bottom: 6px;
+    }
+    .history-toggle { font-size: 10px; color: var(--noir-muted); transition: transform 200ms; }
+    .history-toggle.open { transform: rotate(90deg); }
+    .history-item {
+      padding: 6px 8px; border-bottom: 1px solid rgba(42,42,42,0.5);
+      cursor: pointer; transition: background 120ms;
+    }
+    .history-item:last-child { border-bottom: none; }
+    .history-item:hover { background: rgba(139,0,0,0.06); }
+    .history-req { font-family: 'Courier Prime', monospace; font-size: 11px; color: var(--noir-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .history-meta { display: flex; gap: 8px; margin-top: 3px; font-size: 10px; color: var(--noir-dim); }
+    .history-score { color: #4ade80; font-weight: 600; }
+    .history-empty { font-size: 11px; color: var(--noir-muted); padding: 8px 0; text-align: center; }
   </style>
 </head>
 <body class="noir-theme">
@@ -629,6 +675,16 @@ var ORCHESTRATE_CONTENT = [
           '<span class="quality-val" id="orch-quality-val">8.0</span>',
         '</div>',
       '</div>',
+      '<div class="orch-card" id="history-panel-card">',
+        '<div class="history-header" onclick="toggleHistoryPanel()">',
+          '<div class="orch-card-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">// 历史经验</div>',
+          '<span class="history-toggle" id="history-toggle">&#9654;</span>',
+        '</div>',
+        '<div id="history-list" class="history-panel" style="display:none;margin-top:8px;">',
+          '<div class="history-empty" id="history-empty">暂无历史经验</div>',
+        '</div>',
+      '</div>',
+
 
       '<div class="orch-card" style="flex:1;min-height:0;display:flex;flex-direction:column;">',
         '<div class="orch-card-title">// 任务历史 <span id="job-count" style="font-size:10px;color:var(--noir-muted);font-weight:normal;margin-left:6px;"></span></div>',
@@ -1049,15 +1105,33 @@ function startNewJob() {
 }
 
 function selectJob(jobId) {
-  // #region agent log — 最低层埋点：selectJob 入口
+  // #region agent log
+  console.log('[DBG-selectJob] jobId=' + jobId);
   fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H3',location:'orchestrate.html:selectJob',message:'selectJob',data:{jobId:String(jobId||'')},timestamp:Date.now()})}).catch(function(){});
   // #endregion
-  if (_selectedJobId && _streamReaders[_selectedJobId]) {
-    _streamReaders[_selectedJobId].cancelFn();
-    delete _streamReaders[_selectedJobId];
+
+  var prevId = _selectedJobId;
+
+  // 取消旧 SSE（如果存在）
+  if (prevId && _streamReaders[prevId]) {
+    _streamReaders[prevId].cancelFn();
+    delete _streamReaders[prevId];
   }
   _selectedJobId = jobId;
-  clearRightPanel();
+
+  // 只在真正切换任务时（jobId 变化）才清空 right panel，不清空文件列表
+  if (prevId !== jobId) {
+    _steps = []; _stepIdx = 0;
+    var ph = document.getElementById('progress-header');
+    if (ph) ph.style.display = 'none';
+    var cancelBtn = document.getElementById('cancel-btn');
+    if (cancelBtn) cancelBtn.style.display = '';
+    clearLogs();
+    // 重置评价区（不清文件区，文件区由 clearResult / fetchJobAndStream 接管）
+    _resetEvalArea();
+    renderStepList();
+  }
+
   fetchJobAndStream(jobId);
 }
 
@@ -1066,6 +1140,7 @@ function fetchJobAndStream(jobId) {
     .then(function(r) { return r.json(); })
     .then(function(job) {
       // #region agent log — API 回调最开头（零分支）
+      console.log('[DBG-fetchThen] jobId=' + jobId + ' status=' + job.status + ' hasResult=' + !!job.result + ' resultKeys=' + (job.result ? Object.keys(job.result).join(',') : 'null') + ' nFiles=' + (job.result && Array.isArray(job.result.files) ? job.result.files.length : (job.result ? typeof job.result.files : 'no-result')));
       fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H3',location:'orchestrate.html:fetchThen',message:'fetchThen_top',data:{jobId:String(jobId||''),status:job.status,hasResult:!!job.result,nFiles:job.result&&Array.isArray(job.result.files)?job.result.files.length:typeof job.result&&job.result!==null?'obj_'+Object.keys(job.result||{}).length:'none'},timestamp:Date.now()})}).catch(function(){});
       // #endregion
       if (job.error) { console.error(job.error); return; }
@@ -1205,6 +1280,9 @@ function handleJobEvent(jobId, eventType, data) {
     case 'self_healing':     onSelfHealing(d);      break;
     case 'loop_warning':       onLoopWarning(d);      break;
     case 'human_intervention': onHumanIntervention(d); break;
+    case 'hierarchy_start':    onHierarchyStart(d);    break;
+    case 'hierarchy_expand':   onHierarchyExpand(d);   break;
+    case 'hierarchy_done':     onHierarchyDone(d);     break;
     case 'final_result':     onFinalResult(d);      break;
     case 'error':            onOrchError(d);        break;
     case 'done':             onJobDone(d.status || 'done'); break;
@@ -1316,7 +1394,8 @@ function copyDrawerResult() {
 function onFinalResult(d) {
   // #region agent log
   window._orchDbgFr = (window._orchDbgFr || 0) + 1;
-  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H3',location:'orchestrate.html:onFinalResult',message:'onFinalResult',data:{callN:window._orchDbgFr,keys:Object.keys(d||{}),filesIsArray:Array.isArray(d&&d.files),filesLen:Array.isArray(d&&d.files)?d.files.length:String(typeof(d&&d.files)),stackSnippet:(new Error()).stack?String((new Error()).stack).split('\n').slice(1,4).join('|'):''},timestamp:Date.now()})}).catch(function(){});
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ba534'},body:JSON.stringify({sessionId:'6ba534',hypothesisId:'H3',location:'orchestrate.html:onFinalResult',message:'onFinalResult',data:{callN:window._orchDbgFr,keys:Object.keys(d||{}),filesIsArray:Array.isArray(d&&d.files),filesLen:Array.isArray(d&&d.files)?d.files.length:String(typeof(d&&d.files)),outputDir:String(d&&d.output_dir),stackSnippet:(new Error()).stack?String((new Error()).stack).split('\n').slice(1,4).join('|'):''},timestamp:Date.now()})}).catch(function(){});
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d85885'},body:JSON.stringify({sessionId:'d85885',runId:'debug-run',hypothesisId:'B2',location:'orchestrate.html:onFinalResult',message:'B2: onFinalResult called',data:{keys:Object.keys(d||{}),filesIsArray:Array.isArray(d&&d.files),filesLen:Array.isArray(d&&d.files)?d.files.length:String(typeof(d&&d.files)),outputDir:String(d&&d.output_dir)},timestamp:Date.now()})}).catch(function(){});
   // #endregion
   if (_orchHasStepId('self_heal')) {
     for (var si = 0; si < _steps.length; si++) {
@@ -1372,6 +1451,9 @@ var _currentModalFile = null; // 当前预览的文件信息
 var _expandedFolder = null;   // 当前展开的文件夹 plan_id
 
 function _renderFileList(d, jobId) {
+  // #region agent log
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d85885'},body:JSON.stringify({sessionId:'d85885',runId:'debug-run',hypothesisId:'B2',location:'orchestrate.html:_renderFileList',message:'B2: _renderFileList',data:{jobId:String(jobId||''),nFiles:Array.isArray(d&&d.files)?d.files.length:String(typeof(d&&d.files)),outputDir:String(d&&d.output_dir),areaExists:!!document.getElementById('orch-files-area')},timestamp:Date.now()})}).catch(function(){});
+  // #endregion
   var files = d.files || [];
   var outputDir = d.output_dir || '';
   var planId = d.plan_id || '';
@@ -1394,7 +1476,7 @@ function _renderFileList(d, jobId) {
   html += '<div class="orch-files-actions">';
   html += '<button type="button" class="orch-file-btn" onclick="downloadAllFiles(\'' + encodeURIComponent(jobId || '') + '\')">打包下载</button>';
   if (outputDir) {
-    html += '<button type="button" class="orch-file-btn" onclick="openOutputFolder(\'' + encodeURIComponent(outputDir) + '\')">打开目录</button>';
+    html += '<button type="button" class="orch-file-btn" onclick="openOutputFolder(\'' + encodeURIComponent(jobId || '') + '\')">打开目录</button>';
   }
   html += '</div></div>';
 
@@ -1549,10 +1631,16 @@ function previewFile(jobId, filename) {
   var jid = decodeURIComponent(jobId || '');
   var fname = decodeURIComponent(filename || '');
   if (!jid || !fname) return;
+  // #region agent log
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d85885'},body:JSON.stringify({sessionId:'d85885',location:'orchestrate.html:previewFile',message:'previewFile called',data:{jid:jid,fname:fname},timestamp:Date.now()})}).catch(function(){});
+  // #endregion
 
   fetch('/api/orchestrate/jobs/' + encodeURIComponent(jid) + '/files/' + encodeURIComponent(fname))
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      // #region agent log
+      fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d85885'},body:JSON.stringify({sessionId:'d85885',location:'orchestrate.html:previewFile',message:'previewFile result',data:{dataHasError:!!(data&&data.error),keys:Object.keys(data||{})},timestamp:Date.now()})}).catch(function(){});
+      // #endregion
       if (data.error) { toast('读取文件失败: ' + data.error, 'error'); return; }
       _currentModalFile = { jobId: jid, filename: fname };
       openFileModal(fname, data.content || '', data.file_type || 'other', data.size || 0);
@@ -1561,12 +1649,20 @@ function previewFile(jobId, filename) {
 }
 
 function openFileModal(fname, content, ftype, size) {
+  // #region agent log
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d85885'},body:JSON.stringify({sessionId:'d85885',location:'orchestrate.html:openFileModal',message:'openFileModal',data:{fname:fname,ftype:ftype,contentLen:String(content||'').length},timestamp:Date.now()})}).catch(function(){});
+  // #endregion
   var backdrop = document.getElementById('orch-file-modal-backdrop');
   var nameEl = document.getElementById('orch-file-modal-name');
   var metaEl = document.getElementById('orch-file-modal-meta');
   var contentEl = document.getElementById('orch-file-modal-content');
 
-  if (!backdrop) return;
+  if (!backdrop) {
+    // #region agent log
+    fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d85885'},body:JSON.stringify({sessionId:'d85885',location:'orchestrate.html:openFileModal',message:'backdrop NOT FOUND',data:{fname:fname},timestamp:Date.now()})}).catch(function(){});
+    // #endregion
+    return;
+  }
 
   if (nameEl) nameEl.textContent = fname;
   if (metaEl) metaEl.textContent = _formatSize(size) + ' \u00B7 ' + ftype;
@@ -1663,16 +1759,25 @@ function downloadAllFiles(jobId) {
   window.open('/api/orchestrate/jobs/' + encodeURIComponent(jid) + '/download-all', '_blank');
 }
 
-function openOutputFolder(outputDir) {
-  var dir = decodeURIComponent(outputDir || '');
-  if (!dir) return;
-  // Windows: use explorer
-  var win = window.navigator.userAgent.indexOf('Win') !== -1;
-  if (win) {
-    window.open('file:///' + dir.replace(/\\/g, '/'), '_blank');
-  } else {
-    toast('\u6253\u5f00\u76ee\u5f55: ' + dir, 'info');
-  }
+function openOutputFolder(jobId) {
+  var jid = decodeURIComponent(jobId || '');
+  if (!jid) return;
+  // #region agent log
+  fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d85885'},body:JSON.stringify({sessionId:'d85885',location:'orchestrate.html:openOutputFolder',message:'openOutputFolder',data:{jid:jid},timestamp:Date.now()})}).catch(function(){});
+  // #endregion
+  fetch('/api/orchestrate/jobs/' + encodeURIComponent(jid) + '/open-folder', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      // #region agent log
+      fetch('http://127.0.0.1:7295/ingest/0c1f8eb6-a59b-4da7-9818-4871e06c8e54',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d85885'},body:JSON.stringify({sessionId:'d85885',location:'orchestrate.html:openOutputFolder',message:'openOutputFolder result',data:{data:data},timestamp:Date.now()})}).catch(function(){});
+      // #endregion
+      if (data.error) {
+        toast('\u6253\u5f00\u76ee\u5f55\u5931\u8d25: ' + data.error, 'error');
+      } else {
+        toast('\u5df2\u6253\u5f00\u76ee\u5f55: ' + data.path, 'info');
+      }
+    })
+    .catch(function(e) { toast('\u6253\u5f00\u76ee\u5f55\u5931\u8d25: ' + e.message, 'error'); });
 }
 
 function _formatSize(bytes) {
@@ -1742,6 +1847,34 @@ function normKey(agent) {
   return 'system';
 }
 
+function _resetEvalArea() {
+  var evalEmpty = document.getElementById('eval-empty');
+  if (evalEmpty) evalEmpty.style.display = '';
+  var evalMeta = document.getElementById('eval-meta');
+  if (evalMeta) evalMeta.classList.remove('visible');
+  var elLoop = document.getElementById('eval-loop');
+  var elHeal = document.getElementById('eval-heal');
+  if (elLoop) elLoop.innerHTML = '\u2014';
+  if (elHeal) elHeal.innerHTML = '\u2014';
+  var qRow = document.getElementById('resultquality-row');
+  if (qRow) qRow.style.display = 'none';
+  var bar = document.getElementById('quality-bar');
+  if (bar) { bar.style.width = '0%'; bar.className = 'quality-bar'; }
+  var qLabel = document.getElementById('quality-score-label');
+  if (qLabel) { qLabel.textContent = '0.0'; qLabel.className = 'quality-score-label'; }
+  var rb = document.getElementById('result-badge');
+  if (rb) { rb.className = 'result-badge'; rb.textContent = ''; }
+  var at = document.getElementById('artifact-title');
+  if (at) at.textContent = '\u7f16\u6392\u6c47\u603b\u62a5\u544a';
+  var ap = document.getElementById('artifact-preview');
+  if (ap) ap.textContent = '\u7b49\u5f85\u4efb\u52a1\u5b8c\u6210\u2026';
+  var ac = document.getElementById('artifact-card');
+  if (ac) ac.classList.add('disabled');
+  closeResultDrawer();
+  var pre = document.getElementById('orch-drawer-pre');
+  if (pre) pre.textContent = '';
+}
+
 function clearRightPanel() {
   _steps = []; _stepIdx = 0;
   var ph = document.getElementById('progress-header');
@@ -1758,7 +1891,8 @@ function hideLogEmpty() {
 
 function resetTimeline() { _steps = []; renderStepList(); }
 
-function appendLog(agent, message) {
+function appendLog(agent, message, opts) {
+  opts = opts || {};
   var body = document.getElementById('log-body');
   if (!body) return;
   hideLogEmpty();
@@ -1768,11 +1902,15 @@ function appendLog(agent, message) {
   var s = String(now.getSeconds()).padStart(2, '0');
   var time = h + ':' + m + ':' + s;
   var entry = document.createElement('div');
-  entry.className = 'log-entry';
+  entry.className = 'log-entry' + (opts.entryClass ? ' ' + opts.entryClass : '');
+  if (opts.dataDepth != null && opts.dataDepth !== '') {
+    entry.setAttribute('data-depth', String(opts.dataDepth));
+  }
+  var msgHtml = opts.html ? message : esc(message);
   entry.innerHTML =
     '<span class="log-time">' + time + '</span>' +
     '<span class="log-agent ' + agent + '">[' + agent.replace('_worker','') + ']</span>' +
-    '<span class="log-msg">' + esc(message) + '</span>';
+    '<span class="log-msg">' + msgHtml + '</span>';
   body.appendChild(entry);
   body.scrollTop = body.scrollHeight;
 }
@@ -1809,7 +1947,7 @@ function clearResult() {
   if (ap) ap.textContent = '\u7b49\u5f85\u4efb\u52a1\u5b8c\u6210\u2026';
   var ac = document.getElementById('artifact-card');
   if (ac) ac.classList.add('disabled');
-  // 清空文件列表
+  // 清空文件列表（placeholder，切换任务时由 _renderFileList 覆盖）
   var filesArea = document.getElementById('orch-files-area');
   if (filesArea) {
     filesArea.innerHTML = '<p class="orch-files-hint" id="orch-files-placeholder">\u4efb\u52a1\u5b8c\u6210\u540e\uff0c<code>outputs/&lt;plan_id&gt;/</code> \u4e0b\u7684\u4ea7\u51fa\u6587\u4ef6\u5c06\u663e\u793a\u5728\u6b64\uff0c\u53ef\u5c55\u5f00\u9884\u89c8 .py / .html / .md \u7b49\u3002</p>';
@@ -1832,6 +1970,109 @@ window.toggleTimeline = toggleTimeline;
 window.openResultDrawer = openResultDrawer;
 window.closeResultDrawer = closeResultDrawer;
 window.copyDrawerResult = copyDrawerResult;
+window.toggleFolderCard = toggleFolderCard;
+window.downloadAllFiles = downloadAllFiles;
+window.openOutputFolder = openOutputFolder;
+window.previewFile = previewFile;
+window.downloadFile = downloadFile;
+window.closeFileModal = closeFileModal;
+window.downloadCurrentModalFile = downloadCurrentModalFile;
+window.toggleHistoryPanel = toggleHistoryPanel;
+window.loadHistoryEpisode = loadHistoryEpisode;
+
+// ── P2-A: 历史经验面板 ──────────────────────────────────────────────────────
+var _historyLoaded = false;
+
+function loadHistoryPanel() {
+  if (_historyLoaded) return;
+  _historyLoaded = true;
+  fetch('/api/orchestrate/episodes?limit=10')
+    .then(function(r) { return r.json(); })
+    .then(function(episodes) {
+      var el = document.getElementById('history-list');
+      var empty = document.getElementById('history-empty');
+      if (!el) return;
+      if (!episodes || !episodes.length) {
+        if (empty) empty.style.display = '';
+        return;
+      }
+      if (empty) empty.style.display = 'none';
+      el.innerHTML = episodes.map(function(ep) {
+        var req = (ep.requirement || '').slice(0, 60);
+        var score = parseFloat(ep.quality_score || 0).toFixed(1);
+        var created = (ep.created_at || '').slice(0, 10);
+        return '<div class="history-item" onclick="loadHistoryEpisode(\'' + (ep.id || '') + '\')">' +
+          '<div class="history-req">' + esc(req) + '</div>' +
+          '<div class="history-meta"><span class="history-score">' + score + '</span><span>' + created + '</span></div>' +
+        '</div>';
+      }).join('');
+    })
+    .catch(function() {});
+}
+
+function toggleHistoryPanel() {
+  var el = document.getElementById('history-list');
+  var toggle = document.getElementById('history-toggle');
+  if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : '';
+  if (toggle) toggle.classList.toggle('open', !open);
+  if (!open && !_historyLoaded) loadHistoryPanel();
+}
+
+function loadHistoryEpisode(episodeId) {
+  fetch('/api/orchestrate/episodes/' + encodeURIComponent(episodeId))
+    .then(function(r) { return r.json(); })
+    .then(function(ep) {
+      var req = ep.requirement || '未知需求';
+      var score = parseFloat(ep.quality_score || 0).toFixed(1);
+      var agents = Array.isArray(ep.agents_used) ? ep.agents_used.join(', ') : '';
+      var created = (ep.created_at || '').slice(0, 19).replace('T', ' ');
+      var tasks = Array.isArray(ep.tasks) ? ep.tasks : [];
+      var tasksHtml = tasks.map(function(t) {
+        return '<div style="font-size:11px;color:var(--noir-dim);padding:2px 0;">• ' + esc(t.assigned_agent || '?') + ': ' + esc((t.description || '').slice(0, 80)) + '</div>';
+      }).join('');
+      var modal = document.createElement('div');
+      modal.style = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;';
+      modal.innerHTML = '<div style="background:var(--noir-card);border:1px solid var(--noir-border);border-radius:12px;max-width:600px;width:100%;max-height:80vh;overflow-y:auto;padding:20px;position:relative;">' +
+        '<button onclick="this.closest(\'div\').parentElement.remove()" style="position:absolute;top:12px;right:12px;background:none;border:none;color:var(--noir-dim);cursor:pointer;font-size:18px;">&times;</button>' +
+        '<div style="font-family:\'Courier Prime\',monospace;font-size:14px;color:var(--noir-text);margin-bottom:8px;">' + esc(req) + '</div>' +
+        '<div style="font-size:12px;color:var(--noir-dim);margin-bottom:12px;">质量 <span style="color:#4ade80;font-weight:600;">' + score + '</span> | ' + esc(created) + '</div>' +
+        '<div style="font-size:12px;color:var(--noir-dim);margin-bottom:12px;">Agent: ' + esc(agents) + '</div>' +
+        '<div style="font-size:12px;color:var(--noir-text);">' + tasksHtml + '</div>' +
+      '</div></div>';
+      document.body.appendChild(modal);
+      modal.addEventListener('click', function(e) {
+        if (e.target === modal) modal.remove();
+      });
+    })
+    .catch(function(err) { toast('加载经验详情失败', 'error'); });
+}
+
+// ── P2-D: 层级编排事件处理 ─────────────────────────────────────────────────
+function onHierarchyStart(d) {
+  var depth = parseInt(d.depth || 0);
+  var msg = d.message || ('[层级 ' + depth + '] 正在规划...');
+  appendLog('system', msg);
+  var badgeLine = '<span class="hierarchy-badge">L' + depth + '</span> plan_id: ' + esc(d.plan_id || '');
+  appendLog('system', badgeLine, { html: true, entryClass: 'log-entry--hierarchy-meta' });
+}
+
+function onHierarchyExpand(d) {
+  var depth = parseInt(d.depth || 0);
+  var msg = d.message || ('[层级 ' + depth + '] 展开复杂任务: ' + (d.task_id || ''));
+  appendLog('system', msg, { entryClass: 'log-entry--hierarchy-expand', dataDepth: depth });
+}
+
+function onHierarchyDone(d) {
+  var depth = parseInt(d.depth || 0);
+  var score = parseFloat(d.quality_score || 0).toFixed(1);
+  var passed = d.passed ? '通过' : '未达标';
+  appendLog('system', '[层级 ' + depth + '] 完成 — 质量 ' + score + '/10 (' + passed + '), ' + (d.task_count || 0) + ' 个子任务');
+  var badgeLine = '<span class="hierarchy-badge">L' + depth + ' DONE</span> plan_id: ' + esc(d.plan_id || '');
+  appendLog('system', badgeLine, { html: true, entryClass: 'log-entry--hierarchy-meta' });
+}
+
 
 })();
 </script>

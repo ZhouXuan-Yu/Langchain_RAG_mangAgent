@@ -1,9 +1,243 @@
 """Token tracker — 22-24: Token 使用量追踪与成本统计."""
 
+import json
+import sqlite3
+import threading
+import uuid
+from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 import tiktoken
+
+from src.config import PROJECT_ROOT
+
+# ── agent_usage 表路径 ────────────────────────────────────────────────────────
+_AGENTS_DB_DIR = PROJECT_ROOT / "data"
+_AGENTS_DB_DIR.mkdir(exist_ok=True)
+_AGENTS_DB = _AGENTS_DB_DIR / "agent_usage.db"
+
+_usage_lock = threading.Lock()
+
+
+@contextmanager
+def _conn():
+    """线程安全的 SQLite 连接上下文管理器."""
+    conn = sqlite3.connect(str(_AGENTS_DB), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _init_usage_db():
+    """初始化 agent_usage 表."""
+    with _conn() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS agent_usage (
+                id              TEXT PRIMARY KEY,
+                job_id          TEXT,
+                agent_id        TEXT,
+                provider        TEXT DEFAULT 'deepseek',
+                model           TEXT DEFAULT 'deepseek-chat',
+                input_tokens    INTEGER DEFAULT 0,
+                output_tokens   INTEGER DEFAULT 0,
+                cost_usd        REAL DEFAULT 0.0,
+                duration_ms     INTEGER DEFAULT 0,
+                label           TEXT DEFAULT '',
+                created_at      TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS agent_episodes (
+                id               TEXT PRIMARY KEY,
+                job_id           TEXT,
+                requirement      TEXT,
+                tasks            TEXT,
+                results          TEXT,
+                quality_score    REAL DEFAULT 0.0,
+                duration_ms      INTEGER DEFAULT 0,
+                agents_used      TEXT,
+                max_depth        INTEGER DEFAULT 1,
+                healing_attempts INTEGER DEFAULT 0,
+                passed           INTEGER DEFAULT 0,
+                created_at       TEXT
+            )
+        """)
+
+
+_init_usage_db()
+
+
+# ── AgentUsageStore ──────────────────────────────────────────────────────────
+
+
+class AgentUsageStore:
+    """agent_usage 表的读写接口，按 job_id 聚合统计."""
+
+    @staticmethod
+    def save(
+        job_id: str,
+        agent_id: str,
+        input_tokens: int,
+        output_tokens: int,
+        model: str = "deepseek-chat",
+        provider: str = "deepseek",
+        cost_usd: float = 0.0,
+        duration_ms: int = 0,
+        label: str = "",
+    ) -> str:
+        """写入一条 usage 记录，返回记录 id."""
+        record_id = f"usage_{uuid.uuid4().hex[:12]}"
+        now = datetime.now().isoformat()
+        with _conn() as c:
+            c.execute(
+                """INSERT INTO agent_usage
+                (id, job_id, agent_id, provider, model,
+                 input_tokens, output_tokens, cost_usd, duration_ms, label, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (record_id, job_id, agent_id, provider, model,
+                 input_tokens, output_tokens, cost_usd, duration_ms, label, now),
+            )
+        return record_id
+
+    @staticmethod
+    def get_by_job(job_id: str) -> list[dict]:
+        """获取指定 job 的所有 usage 记录."""
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT * FROM agent_usage WHERE job_id=? ORDER BY created_at",
+                (job_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_overview(days: int = 30) -> dict:
+        """获取全局统计概览（最近 N 天）."""
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        with _conn() as c:
+            row = c.execute(
+                """SELECT
+                    COUNT(*) as total_calls,
+                    COALESCE(SUM(input_tokens), 0)  as total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                    COALESCE(SUM(cost_usd), 0.0) as total_cost_usd,
+                    COALESCE(AVG(cost_usd), 0.0) as avg_cost_per_call,
+                    COUNT(DISTINCT job_id) as total_jobs,
+                    COUNT(DISTINCT agent_id) as total_agents
+                FROM agent_usage
+                WHERE created_at >= ?""",
+                (cutoff,),
+            ).fetchone()
+
+        return dict(row) if row else {}
+
+    @staticmethod
+    def get_by_agent(agent_id: str, days: int = 30) -> dict:
+        """获取指定 agent 的统计."""
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        with _conn() as c:
+            row = c.execute(
+                """SELECT
+                    agent_id,
+                    COUNT(*) as total_calls,
+                    COALESCE(SUM(input_tokens), 0)  as total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                    COALESCE(SUM(cost_usd), 0.0) as total_cost_usd,
+                    COALESCE(AVG(cost_usd), 0.0) as avg_cost_per_call,
+                    COUNT(DISTINCT job_id) as total_jobs
+                FROM agent_usage
+                WHERE agent_id=? AND created_at >= ?
+                GROUP BY agent_id""",
+                (agent_id, cutoff),
+            ).fetchone()
+
+        return dict(row) if row else {}
+
+    @staticmethod
+    def get_all_agents(days: int = 30) -> list[dict]:
+        """获取所有 agent 的统计列表."""
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        with _conn() as c:
+            rows = c.execute(
+                """SELECT
+                    agent_id,
+                    COUNT(*) as total_calls,
+                    COALESCE(SUM(input_tokens), 0)  as total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                    COALESCE(SUM(cost_usd), 0.0) as total_cost_usd,
+                    COALESCE(AVG(cost_usd), 0.0) as avg_cost_per_call,
+                    COUNT(DISTINCT job_id) as total_jobs
+                FROM agent_usage
+                WHERE created_at >= ?
+                GROUP BY agent_id
+                ORDER BY total_tokens DESC""",
+                (cutoff,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_job_history(limit: int = 50, offset: int = 0) -> list[dict]:
+        """获取编排任务历史（按 job_id 聚合）."""
+        with _conn() as c:
+            rows = c.execute(
+                """SELECT
+                    job_id,
+                    agent_id,
+                    SUM(input_tokens)  as input_tokens,
+                    SUM(output_tokens) as output_tokens,
+                    SUM(input_tokens + output_tokens) as total_tokens,
+                    SUM(cost_usd) as cost_usd,
+                    MIN(created_at) as first_call,
+                    MAX(created_at) as last_call,
+                    COUNT(*) as call_count
+                FROM agent_usage
+                GROUP BY job_id, agent_id
+                ORDER BY first_call DESC
+                LIMIT ? OFFSET ?""",
+                (limit, offset),
+            ).fetchall()
+
+        # 按 job_id 聚合
+        job_map: dict[str, dict] = {}
+        for r in rows:
+            jid = r["job_id"]
+            if jid not in job_map:
+                job_map[jid] = {
+                    "job_id": jid,
+                    "first_call": r["first_call"],
+                    "last_call": r["last_call"],
+                    "total_calls": 0,
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_tokens": 0,
+                    "total_cost_usd": 0.0,
+                    "agents": [],
+                }
+            job_map[jid]["total_calls"] += r["call_count"]
+            job_map[jid]["total_input_tokens"] += r["input_tokens"]
+            job_map[jid]["total_output_tokens"] += r["output_tokens"]
+            job_map[jid]["total_tokens"] += r["total_tokens"]
+            job_map[jid]["total_cost_usd"] += r["cost_usd"]
+            job_map[jid]["agents"].append({
+                "agent_id": r["agent_id"],
+                "call_count": r["call_count"],
+                "tokens": r["total_tokens"],
+                "cost_usd": r["cost_usd"],
+            })
+
+        result = list(job_map.values())
+        result.sort(key=lambda x: x["first_call"], reverse=True)
+        return result
 
 
 class TokenTracker:
@@ -26,6 +260,31 @@ class TokenTracker:
     def count(self, text: str) -> int:
         """计算文本的 token 数量."""
         return len(self.enc.encode(text))
+
+    def save_to_db(
+        self,
+        job_id: str = "",
+        agent_id: str = "",
+        provider: str = "deepseek",
+        duration_ms: int = 0,
+        label: str = "",
+    ) -> str:
+        """
+        将当前累计的 token 消耗写入 agent_usage 表。
+
+        适用于 orchestrator 等场景：先批量累加，最后一次性入库。
+        """
+        return AgentUsageStore.save(
+            job_id=job_id,
+            agent_id=agent_id,
+            provider=provider,
+            model=self.model,
+            input_tokens=self.total_prompt_tokens,
+            output_tokens=self.total_completion_tokens,
+            cost_usd=self.total_cost_usd,
+            duration_ms=duration_ms,
+            label=label,
+        )
 
     def record(
         self,

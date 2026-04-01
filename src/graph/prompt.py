@@ -124,6 +124,9 @@ SUPERVISOR_PROMPT_TEMPLATE = """# 角色
 # 用户需求
 {requirement}
 
+# 历史经验参考
+{experience_hint}
+
 # 你的团队（可指派的 Agent）
 {agents_desc}
 
@@ -379,6 +382,7 @@ def build_supervisor_prompt(
     agents_desc: str,
     chief_note: str = "",
     max_tasks: int = 5,
+    experience_hint: str = "",
 ) -> str:
     """Render the Supervisor planning prompt."""
     return SUPERVISOR_PROMPT_TEMPLATE.format(
@@ -386,4 +390,5 @@ def build_supervisor_prompt(
         agents_desc=agents_desc,
         chief_note=chief_note or "（无总协调者）",
         max_tasks=max_tasks,
+        experience_hint=experience_hint or "（无历史经验记录）",
     )

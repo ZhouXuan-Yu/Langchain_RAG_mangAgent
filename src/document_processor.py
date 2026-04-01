@@ -28,22 +28,6 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
-
-def _log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    try:
-        import json as _j, time as _t
-        _path = Path(__file__).resolve().parent.parent / "debug-743147.log"
-        with _path.open("a", encoding="utf-8") as _f:
-            _f.write(_j.dumps({
-                "sessionId": "743147",
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(_t.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
 DATA_DIR = PROJECT_ROOT / "data"
 DOCS_DIR = DATA_DIR / "documents"
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
@@ -230,9 +214,6 @@ def extract_text(content: bytes, doc_type: str) -> str:
             return content.decode("utf-8", errors="replace")
     except Exception as e:
         logger.warning(f"[doc_processor] extract failed for type {doc_type}: {e}")
-        _log("H_EXTRACT", "document_processor.extract_text:except", "exception", {
-            "doc_type": doc_type, "exc_type": type(e).__name__, "exc_msg": str(e)[:300],
-        })
         return ""
 
 
@@ -275,11 +256,6 @@ def _extract_pdf(content: bytes) -> str:
     依次尝试 PyMuPDF → pypdf → pdfplumber，取最长结果。
     PyMuPDF 对中文、学术排版、嵌入字体 PDF 兼容性通常最好。
     """
-    _log("H_PDF", "document_processor._extract_pdf:entry", "enter", {
-        "len": len(content),
-        "is_pdf_header": content[:5] == b"%PDF-" if len(content) >= 5 else False,
-    })
-
     methods: list[tuple[str, str]] = []
 
     # 1. PyMuPDF（优先）
@@ -366,18 +342,12 @@ def _extract_pdf(content: bytes) -> str:
         _ocr_s = (ocr_text or "").strip()
         if _ocr_s:
             logger.info("[pdf] OCR fallback succeeded, %s chars", len(ocr_text))
-            _log("H_PDF", "document_processor._extract_pdf:exit", "ocr_ok", {"chars": len(ocr_text)})
             return ocr_text
         logger.warning("[pdf] OCR fallback also produced empty text — giving up")
-        _log("H_PDF", "document_processor._extract_pdf:exit", "ocr_empty", {"methods_tried": ["pymupdf", "pypdf", "pdfplumber", "ocr"]})
         return ""
 
     best_lib, best_text = max(methods, key=lambda x: len(x[1]))
     logger.info("[pdf] using %s result (%s chars)", best_lib, len(best_text))
-    _log("H_PDF", "document_processor._extract_pdf:exit", "text_ok", {
-        "winner": best_lib, "chars": len(best_text),
-        "all": [(n, len(t)) for n, t in methods],
-    })
     return best_text
 
 
@@ -513,19 +483,10 @@ def _extract_pdf_via_ocr(content: bytes) -> str:
     """
     扫描版（纯图片）PDF：渲染页面后依次尝试 EasyOCR → PaddleOCR（2.x / 3.x）。
     """
-    _log("H_OCR", "document_processor._extract_pdf_via_ocr:entry", "enter", {
-        "PDF_OCR_ENABLED": PDF_OCR_ENABLED,
-        "PDF_OCR_GPU": PDF_OCR_GPU,
-    })
     if not PDF_OCR_ENABLED:
-        _log("H_OCR", "document_processor._extract_pdf_via_ocr:exit", "disabled", {})
         return ""
     pngs = _pdf_pages_as_png_for_ocr(content)
-    _log("H_OCR", "document_processor._extract_pdf_via_ocr:pngs", "after_render", {
-        "pngs_none": pngs is None, "pngs_count": len(pngs) if pngs else 0,
-    })
     if pngs is None or not pngs:
-        _log("H_OCR", "document_processor._extract_pdf_via_ocr:exit", "no_pngs", {})
         return ""
 
     # ── EasyOCR（需 torch；首次会下载模型）
@@ -547,15 +508,11 @@ def _extract_pdf_via_ocr(content: bytes) -> str:
         joined = "\n\n".join(page_texts)
         if joined.strip():
             logger.info("[pdf][ocr] EasyOCR 成功，约 %s 字符，%s 页", len(joined), len(pngs))
-            _log("H_OCR", "document_processor._extract_pdf_via_ocr:easyocr", "ok", {"chars": len(joined)})
             return joined
-        _log("H_OCR", "document_processor._extract_pdf_via_ocr:easyocr", "empty", {})
     except ImportError as _ie:
         logger.debug("[pdf][ocr] 未安装 easyocr — pip install easyocr torch")
-        _log("H_OCR", "document_processor._extract_pdf_via_ocr:easyocr", "import_error", {"exc": type(_ie).__name__})
     except Exception as e:
         logger.warning("[pdf][ocr] EasyOCR 错误: %s", e)
-        _log("H_OCR", "document_processor._extract_pdf_via_ocr:easyocr", "exception", {"exc_type": type(e).__name__, "exc_msg": str(e)[:200]})
 
     # ── PaddleOCR + OpenCV（解码 PNG 为 ndarray）
     try:
@@ -579,17 +536,12 @@ def _extract_pdf_via_ocr(content: bytes) -> str:
         joined = "\n\n".join(page_texts)
         if joined.strip():
             logger.info("[pdf][ocr] PaddleOCR 成功，约 %s 字符", len(joined))
-            _log("H_OCR", "document_processor._extract_pdf_via_ocr:paddle", "ok", {"chars": len(joined)})
             return joined
-        _log("H_OCR", "document_processor._extract_pdf_via_ocr:paddle", "empty", {})
     except ImportError as _ie:
         logger.debug("[pdf][ocr] 未安装 paddleocr / opencv")
-        _log("H_OCR", "document_processor._extract_pdf_via_ocr:paddle", "import_error", {"exc": type(_ie).__name__})
     except Exception as e:
         logger.warning("[pdf][ocr] PaddleOCR 错误: %s", e)
-        _log("H_OCR", "document_processor._extract_pdf_via_ocr:paddle", "exception", {"exc_type": type(e).__name__, "exc_msg": str(e)[:200]})
 
-    _log("H_OCR", "document_processor._extract_pdf_via_ocr:exit", "all_empty", {})
     return ""
 
 

@@ -72,6 +72,15 @@ def _cleanup_resources():
     except Exception as e:
         logger.warning(f"[cleanup] TaskScheduler: {e}")
 
+    # 1b. Global ThreadPoolManager
+    try:
+        from src.utils.thread_pool_manager import get_pool_manager
+        pool_mgr = get_pool_manager()
+        pool_mgr.shutdown(wait=False)
+        logger.info("[cleanup] ThreadPoolManager shutdown")
+    except Exception as e:
+        logger.warning(f"[cleanup] ThreadPoolManager: {e}")
+
     # 2. Playwright browser process
     try:
         from src.tools.browser_tools import _browser_pool, _pool_lock
@@ -130,6 +139,11 @@ atexit.register(_cleanup_resources)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("[lifespan] server starting...")
+    # Initialize thread pools
+    from src.utils.thread_pool_manager import get_pool_manager
+    pool_mgr = get_pool_manager()
+    app.state.pool_manager = pool_mgr
+    logger.info("[lifespan] thread pools initialized")
     yield
     logger.info("[lifespan] server shutting down...")
     import asyncio as _asyncio
@@ -193,6 +207,18 @@ for _name in _PAGE_ROUTES:
 
 
 app.include_router(router)
+
+# ── MCP Server（条件挂载）────────────────────────────────────────────────────
+try:
+    from src.mcp.server import router as mcp_router
+    from src.config import ENABLE_MCP_SERVER
+    if ENABLE_MCP_SERVER:
+        app.include_router(mcp_router)
+        logger.info("[lifespan] MCP server enabled at /mcp/*")
+    else:
+        logger.info("[lifespan] MCP server disabled (set ENABLE_MCP_SERVER=true to enable)")
+except ImportError as e:
+    logger.warning(f"[lifespan] MCP module not available: {e}")
 
 static_root = PROJECT_ROOT / "pages"
 if static_root.exists():

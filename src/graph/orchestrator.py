@@ -1,13 +1,44 @@
-"""Supervisor 核心编排器 — Crayfish Multi-Agent Plan-then-Execute."""
+"""Supervisor 核心编排器 -- Crayfish Multi-Agent Plan-then-Execute."""
 
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Awaitable
 
+_LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "debug-d85885.log")
+
+def _dlog(session_id: str, run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    """Write one NDJSON line to the session debug log (synchronous, fire-and-forget)."""
+    import datetime as _dt
+    entry = {
+        "sessionId": session_id,
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(_dt.datetime.now().timestamp() * 1000),
+    }
+    try:
+        with open(_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+from src.config import ENABLE_LANGSMITH, ENABLE_EPISODIC_MEMORY, ENABLE_HIERARCHICAL_ORCHESTRATION, DEFAULT_MODEL
 from src.utils.output_manager import get_output_manager
+
+# ── LangSmith 条件导入 ──────────────────────────────────────────────────────
+if ENABLE_LANGSMITH:
+    from langsmith import traceable
+else:
+    def traceable(**kwargs):
+        def decorator(fn):
+            return fn
+        return decorator
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +54,7 @@ TASK_STATUS_REJECTED = "rejected"
 
 class AgentMessageBus:
     """
-    Agent 间结构化消息总线 — 负责结果共享与依赖注入。
+    Agent 间结构化消息总线 -- 负责结果共享与依赖注入。
 
     工作方式：
     1. Worker 执行完毕后调用 bus.store_result(task_id, result)
@@ -114,7 +145,7 @@ class TaskItem(dict):
 
 class CrayfishOrchestrator:
     """
-    Supervisor 核心编排器 — 实现 Plan-then-Execute 模式。
+    Supervisor 核心编排器 -- 实现 Plan-then-Execute 模式。
 
     工作流程（前端以「三省六部 + 台阁」呈现；对齐现代多角色产品/安全/工程分工）：
     1. 中书制敕: Supervisor 分析需求，生成 JSON Plan（最多 3 个子任务）
@@ -130,6 +161,7 @@ class CrayfishOrchestrator:
         self.plan_id = ""
         self._participants: dict[str, dict] = {}
 
+    @traceable(project_name="crayfish-orchestration", tags=["supervisor", "multi-agent"])
     async def orchestrate(
         self,
         requirement: str,
@@ -152,6 +184,7 @@ class CrayfishOrchestrator:
         self.task_results = []
         self.plan_id = f"plan_{uuid.uuid4().hex[:8]}"
         self._participants = {p["id"]: p for p in (participants or [])}
+        self._start_time = datetime.now()
 
         # ── 创建输出管理器 ──────────────────────────────────────────────────
         output_mgr = get_output_manager(self.plan_id)
@@ -173,6 +206,35 @@ class CrayfishOrchestrator:
                 "tasks": [dict(t) for t in plan_tasks],
             },
         })
+
+        # ── P2-D: 多级编排分支 ─────────────────────────────────────────────
+        if ENABLE_HIERARCHICAL_ORCHESTRATION:
+            _dlog("d85885", "debug-run", "B1-orch",
+                  "orchestrator.py:orchestrate",
+                  "calling _orchestrate_recursive with initial_plan",
+                  {"n_tasks": len(plan_tasks), "task_ids": [t.get("task_id") for t in plan_tasks]})
+            final_result = await self._orchestrate_recursive(
+                requirement=requirement,
+                enabled_agents=enabled_agents,
+                participants=participants,
+                depth=0,
+                progress_callback=progress_callback,
+                initial_plan=[dict(t) for t in plan_tasks],
+                root_output_mgr=output_mgr,
+            )
+            # 递归路径也需要发出 final_result 事件（供 SSE 前端和 orch_jobs 消费）
+            await self._emit(progress_callback, {
+                "type": "final_result",
+                "summary": final_result.get("summary", ""),
+                "quality_score": final_result.get("quality_score", 0.0),
+                "passed": final_result.get("passed", False),
+                "loop_count": self.loop_count,
+                "plan_id": final_result.get("plan_id", self.plan_id),
+                "output_dir": final_result.get("output_dir", ""),
+                "files": final_result.get("files", []),
+                "summary_file": final_result.get("summary_file"),
+            })
+            return final_result
 
         # ── Step 2: DAG 拓扑排序执行 ──────────────────────────────────────────
         bus = AgentMessageBus.get_instance()
@@ -215,18 +277,25 @@ class CrayfishOrchestrator:
             ]
             batch_results = await asyncio.gather(*coroutines, return_exceptions=True)
 
-            for tid, result in zip(ready, batch_results):
+            for idx, result in enumerate(batch_results):
+                if idx >= len(ready):
+                    continue
+                tid = ready[idx]
                 if isinstance(result, Exception):
                     logger.error(f"[orchestrator] task {tid} failed: {result}")
+                    _agent = task_map[tid]["assigned_agent"] if tid in task_map else "unknown"
                     result = {
                         "task_id": tid,
-                        "agent": task_map[tid]["assigned_agent"],
+                        "agent": _agent,
                         "result": f"[执行失败] {str(result)}",
                         "confidence": 0.0,
                         "quality_score": 0.0,
                         "source": "error",
                         "raw_data": str(result),
                     }
+                elif tid not in task_map:
+                    logger.warning(f"[orchestrator] tid {tid} not in task_map, skipping")
+                    continue
                 bus.store_result(tid, result)
                 all_results.append(result)
                 completed.add(tid)
@@ -305,23 +374,48 @@ class CrayfishOrchestrator:
         # 构建汇总报告
         final_result = self._build_final_result(all_results, overall_quality, passed, output_mgr=output_mgr, requirement=requirement)
 
-        # #region agent log
+        # ── P2-C: 记录 token 使用量到 DB ────────────────────────────────
+        duration_ms = int((datetime.now() - self._start_time).total_seconds() * 1000)
         try:
-            _dbg_p = __import__("pathlib").Path(__file__).resolve().parents[2] / "debug-6ba534.log"
-            _fl = final_result.get("files") or []
-            _dbg_payload = {
-                "sessionId": "6ba534", "hypothesisId": "H1", "location": "orchestrator.py:post_build",
-                "message": "_build_final_result", "timestamp": int(__import__("time").time() * 1000),
-                "data": {
-                    "plan_id": final_result.get("plan_id"),
-                    "n_files": len(_fl) if isinstance(_fl, list) else repr(type(_fl)),
-                    "output_dir_len": len((final_result.get("output_dir") or "")),
-                },
-            }
-            _dbg_p.open("a", encoding="utf-8").write(json.dumps(_dbg_payload, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
+            from src.utils.token_tracker import TokenTracker
+            tracker = TokenTracker(model=DEFAULT_MODEL)
+            tracker.record(
+                prompt_tokens=len(requirement) // 4,  # 粗略估算，实际以 Worker 层记录为准
+                completion_tokens=len(str(final_result.get("summary", ""))) // 4,
+                label="orchestrate_finalize",
+            )
+            tracker.save_to_db(
+                job_id=self.plan_id,
+                agent_id="supervisor",
+                duration_ms=duration_ms,
+                label="orchestrate_total",
+            )
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[orchestrator] token record failed: {e}")
+
+        # ── P2-A: 写入 Episodic Memory ─────────────────────────────────
+        if ENABLE_EPISODIC_MEMORY:
+            try:
+                from src.memory.episode_store import get_episode_store
+                store = get_episode_store()
+                agents_used = list({r.get("agent", "unknown") for r in all_results})
+                store.save(
+                    job_id=self.plan_id,
+                    requirement=requirement,
+                    tasks=[dict(t) for t in plan_tasks],
+                    results=all_results,
+                    quality_score=overall_quality,
+                    duration_ms=duration_ms,
+                    agents_used=agents_used,
+                    max_depth=1,
+                    healing_attempts=healing_attempts,
+                    passed=passed,
+                )
+                logging.getLogger(__name__).info(
+                    f"[orchestrator] episode saved: job={self.plan_id} quality={overall_quality:.1f}"
+                )
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"[orchestrator] episode save failed: {e}")
 
         await self._emit(progress_callback, {
             "type": "final_result",
@@ -341,7 +435,7 @@ class CrayfishOrchestrator:
 
     async def _create_plan(self, requirement: str, enabled_agents: list[str]) -> list[TaskItem]:
         """
-        Supervisor Planning Node — 分析需求，生成 JSON Plan。
+        Supervisor Planning Node -- 分析需求，生成 JSON Plan。
 
         使用"最小完备原则"：只拆解当前最紧迫的 2-3 个子任务。
 
@@ -423,18 +517,42 @@ class CrayfishOrchestrator:
         if "agent_main" in _all_participants:
             cp = _all_participants["agent_main"]
             chief_note = (
-                f"总协调者: agent_main（{cp.get('name', 'Chief Coordinator')}）— "
+                f"总协调者: agent_main（{cp.get('name', 'Chief Coordinator')}）-- "
                 "由系统指定为最高管理者；**禁止**在 JSON 的 assigned_agent 中使用 agent_main。"
                 "子任务仅能分配给下列执行型 Agent id。"
             )
 
         from src.graph.prompt import build_supervisor_prompt
 
+        # ── P2-A: 查询相似历史经验 ──────────────────────────────────
+        experience_hint = ""
+        if ENABLE_EPISODIC_MEMORY:
+            try:
+                from src.memory.episode_store import get_episode_store
+                store = get_episode_store()
+                similar = store.query_similar(requirement, top_k=2)
+                if similar:
+                    lines = ["【历史经验参考】:"]
+                    for e in similar:
+                        score = e.get("quality_score", 0)
+                        req = e.get("requirement", "")[:60]
+                        agents = e.get("agents_used", [])
+                        tasks_raw = e.get("tasks", [])
+                        task_kinds = [t.get("assigned_agent") or t.get("worker_kind", "?") for t in tasks_raw]
+                        lines.append(
+                            f"- 质量 {score:.1f}: \"{req}...\"\n  -> Agent组合: {agents or task_kinds}"
+                        )
+                    experience_hint = "\n".join(lines)
+                    logger.info(f"[orchestrator] found {len(similar)} similar episodes for requirement: {requirement[:50]}")
+            except Exception as e:
+                logger.warning(f"[orchestrator] episode query failed: {e}")
+
         supervisor_prompt = build_supervisor_prompt(
             requirement=requirement,
             agents_desc=agents_desc,
             chief_note=chief_note,
             max_tasks=5,
+            experience_hint=experience_hint,
         )
 
         try:
@@ -593,6 +711,7 @@ class CrayfishOrchestrator:
 
         return tasks
 
+    @traceable(name="worker-execute", tags=["worker", "execute"])
     async def _execute_single_task(
         self,
         task: TaskItem,
@@ -752,10 +871,10 @@ class CrayfishOrchestrator:
         output_mgr=None,
     ) -> dict:
         """
-        通用 Agent 执行器 — 处理所有非内置 worker_kind。
+        通用 Agent 执行器 -- 处理所有非内置 worker_kind。
 
         替代原 _dispatch_generic()，新增：
-        - 实时 SSE worker_progress 推送（初始化 → 分发 → 完成）
+        - 实时 SSE worker_progress 推送（初始化 -> 分发 -> 完成）
         - 动态质量评分（基于结果长度、结构化程度、关键词覆盖）
         """
         task_id = task["task_id"]
@@ -878,49 +997,288 @@ class CrayfishOrchestrator:
 
         return min(max(score, 0.0), 10.0)
 
-    async def _execute_coder_task(
-        self,
-        task: TaskItem,
-        context: list[dict] | None,
-        progress_callback: Callable[[dict], Awaitable[None]] | None = None,
-    ) -> dict:
-        """执行 Coder 任务（可以接收其他 Worker 的结果作为上下文）。"""
-        from src.graph.workers import CoderWorker
+    # ══════════════════════════════════════════════════════════════════════════════
+    #  P2-D 多级编排（Hierarchical Supervisor）
+    # ══════════════════════════════════════════════════════════════════════════════
 
-        task_id = task["task_id"]
+    MAX_HIERARCHY_DEPTH = 3
+
+    def _is_complex_task(self, task: TaskItem) -> bool:
+        """
+        启发式判断：任务是否足够复杂，需要递归拆分。
+
+        判断依据：
+        - 任务描述包含复合关键词（多个、综合、完整、全面、端到端等）
+        - 描述长度超过 300 字符
+        - 标记为顺序执行模式
+        """
+        desc = task.get("description", "")
+        complex_markers = [
+            "多个", "综合", "完整", "全面", "端到端",
+            "以及", "同时", "既", "又", "不但", "而且",
+            "从头到尾", "整个系统", "一整套",
+        ]
+        return (
+            any(m in desc for m in complex_markers)
+            or len(desc) > 300
+            or task.get("execution_mode") == "sequential"
+        )
+
+    async def _orchestrate_recursive(
+        self,
+        requirement: str,
+        enabled_agents: list[str],
+        participants: dict | None = None,
+        depth: int = 0,
+        progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+        initial_plan: list[dict] | None = None,
+        root_output_mgr=None,
+    ) -> dict:
+        """
+        递归编排入口（支持多层级树形执行）。
+
+        depth=0 时，initial_plan 由 orchestrate() 直接传入（避免顶层重复规划两次）。
+        root_output_mgr 由顶层 orchestrate() 创建并传入，所有递归层级和 worker 共用，
+        确保所有文件写入 outputs/<plan_id>/ 而非各层级的 outputs/<plan_id>_L<depth>_xxx/。
+        """
+
+        if participants is None:
+            participants = self._participants
+
+        # 层级标识（仅用于日志/事件名，不参与目录路径）
+        hierarchy_label = f"{self.plan_id}_L{depth}"
+        sub_plan_id = f"{hierarchy_label}_{uuid.uuid4().hex[:6]}"
+
+        # output_mgr 由顶层传入（统一目录），各层级复用；仅在顶层创建新实例
+        if root_output_mgr is not None:
+            output_mgr = root_output_mgr
+        else:
+            output_mgr = get_output_manager(sub_plan_id)
+            output_mgr.ensure_dir()
 
         await self._emit(progress_callback, {
-            "type": "worker_start",
-            "agent": "coder",
-            "task_id": task_id,
-            "task_description": task["description"],
+            "type": "hierarchy_start",
+            "depth": depth,
+            "plan_id": sub_plan_id,
+            "message": f"[层级 {depth}] 正在规划: {requirement[:60]}...",
         })
 
-        try:
-            worker = CoderWorker()
-            result = await worker.execute(task, context, progress_callback)
+        # Supervisor 规划（depth=0 且已有 initial_plan 时直接复用，避免重复调用 LLM）
+        if depth == 0 and initial_plan is not None:
+            plan = initial_plan
+        else:
+            plan = await self._create_plan(requirement, enabled_agents)
+
+        _dlog("d85885", "debug-run", "B1-plan",
+              "orchestrator.py:_orchestrate_recursive",
+              f"[L{depth}] plan created",
+              {"depth": depth, "n_tasks": len(plan), "task_ids": [t.get("task_id") for t in plan], "source": "initial_plan" if (depth == 0 and initial_plan is not None) else "create_plan"})
+
+        await self._emit(progress_callback, {
+            "type": "supervisor_plan",
+            "depth": depth,
+            "plan_id": sub_plan_id,
+            "data": {
+                "plan_id": sub_plan_id,
+                "tasks": [dict(t) for t in plan],
+            },
+        })
+
+        if not plan:
+            return {
+                "task_id": sub_plan_id,
+                "agent": "supervisor",
+                "result": f"[层级 {depth}] 无法规划任务: {requirement[:100]}",
+                "quality_score": 0.0,
+                "source": "hierarchy_recursive",
+                "depth": depth,
+            }
+
+        # 构建 DAG 调度（复用现有 AgentMessageBus）
+        bus = AgentMessageBus.get_instance()
+        task_map: dict[str, TaskItem] = {t["task_id"]: t for t in plan}
+
+        # 注册依赖关系
+        for t in plan:
+            for dep in t.get("depends_on") or []:
+                if dep in task_map:
+                    bus.add_dependency(dep, t["task_id"])
+
+        all_results: list[dict] = []
+        completed: set[str] = set()
+
+        while len(completed) < len(task_map):
+            # 找所有入度为0的就绪任务
+            ready = [
+                tid for tid, deg in bus._in_degree.items()
+                if tid not in completed and deg == 0
+            ]
+            if not ready:
+                ready = [tid for tid in task_map if tid not in completed]
+            if not ready:
+                break
 
             await self._emit(progress_callback, {
-                "type": "worker_done",
-                "agent": "coder",
-                "task_id": task_id,
-                "quality_score": result.get("quality_score", 0.0),
-                "result": result.get("result", ""),
+                "type": "worker_start",
+                "agent": "supervisor",
+                "depth": depth,
+                "task_id": "parallel_batch",
+                "task_description": f"[层级 {depth}] 并行执行 {len(ready)} 个任务: {ready}",
             })
 
-            return result
+            _dlog("d85885", "debug-run", "B1a",
+                "orchestrator.py:ready-check",
+                f"[L{depth}] ready tasks before gather",
+                {"ready": ready, "task_map_keys": list(task_map.keys()), "completed": list(completed)})
 
-        except Exception as e:
-            logger.error(f"[orchestrator] coder task {task_id} failed: {e}")
-            return {
-                "task_id": task_id,
-                "agent": "coder",
-                "result": f"[代码生成失败] {str(e)}",
-                "confidence": 0.0,
-                "quality_score": 0.0,
-                "source": "error",
-                "raw_data": str(e),
-            }
+            coroutines = []
+            for tid in ready:
+                task = task_map[tid]
+                context = bus.get_context(tid)
+
+                # 递归判断
+                if depth < self.MAX_HIERARCHY_DEPTH and self._is_complex_task(task):
+                    # 递归拆分
+                    async def _recursive_sub(task_item: TaskItem):
+                        await self._emit(progress_callback, {
+                            "type": "hierarchy_expand",
+                            "depth": depth,
+                            "task_id": task_item["task_id"],
+                            "message": f"[层级 {depth}] 展开复杂任务: {task_item['description'][:50]}...",
+                        })
+                        return await self._orchestrate_recursive(
+                            requirement=task_item["description"],
+                            enabled_agents=enabled_agents,
+                            participants=participants,
+                            depth=depth + 1,
+                            progress_callback=progress_callback,
+                            root_output_mgr=output_mgr,
+                        )
+                    coroutines.append(_recursive_sub(task))
+                else:
+                    # 直接执行
+                    coroutines.append(
+                        self._execute_single_task(task, context, progress_callback, output_mgr)
+                    )
+
+            batch_results = await asyncio.gather(*coroutines, return_exceptions=True)
+
+            _dlog("d85885", "debug-run", "B1b",
+                "orchestrator.py:after-gather",
+                f"[L{depth}] batch_results after gather",
+                {"ready": ready, "result_types": [type(r).__name__ for r in batch_results]})
+
+            for idx, result in enumerate(batch_results):
+                if idx >= len(ready):
+                    _dlog("d85885", "debug-run", "B1-idx",
+                          "orchestrator.py:extra-result",
+                          f"[L{depth}] extra result at idx (ready/result mismatch)",
+                          {"idx": idx, "ready_len": len(ready), "result_type": type(result).__name__})
+                    continue
+                tid = ready[idx]
+                if isinstance(result, Exception):
+                    _dlog("d85885", "debug-run", "B1c",
+                        "orchestrator.py:exception-caught",
+                        f"[L{depth}] task exception",
+                        {"tid": tid, "exc_type": type(result).__name__, "exc": str(result),
+                         "task_map_keys": list(task_map.keys()), "in_task_map": tid in task_map})
+                    _agent = task_map[tid]["assigned_agent"] if tid in task_map else "unknown"
+                    result = {
+                        "task_id": tid,
+                        "agent": _agent,
+                        "result": f"[执行失败] {str(result)}",
+                        "quality_score": 0.0,
+                        "source": "error",
+                    }
+                elif tid not in task_map:
+                    _dlog("d85885", "debug-run", "B1-unknown",
+                          "orchestrator.py:unknown-tid",
+                          f"[L{depth}] tid not in task_map",
+                          {"tid": tid})
+                    continue
+                bus.store_result(tid, result)
+                all_results.append(result)
+                completed.add(tid)
+                bus.mark_done(tid)
+
+        # 聚合结果
+        overall_quality = self._evaluate_overall_quality(all_results)
+        passed = overall_quality >= 8.0
+
+        await self._emit(progress_callback, {
+            "type": "hierarchy_done",
+            "depth": depth,
+            "plan_id": sub_plan_id,
+            "quality_score": overall_quality,
+            "passed": passed,
+            "task_count": len(all_results),
+        })
+
+        return self._aggregate_sub_results(all_results, sub_plan_id, overall_quality, depth, output_mgr=output_mgr, requirement=requirement)
+
+    def _aggregate_sub_results(
+        self,
+        results: list[dict],
+        plan_id: str,
+        overall_quality: float,
+        depth: int = 0,
+        output_mgr=None,
+        requirement: str = "",
+    ) -> dict:
+        """聚合多层级执行结果，并附加 output_dir / files（由 output_mgr 提供）。"""
+        all_text_parts = []
+        all_files = []
+        for r in results:
+            txt = r.get("result", "")
+            if isinstance(txt, str):
+                all_text_parts.append(txt)
+            files = r.get("files", [])
+            if files:
+                all_files.extend(files)
+
+        # 构建 summary（与 _build_final_result 保持一致，供 SSE final_result 事件使用）
+        passed = overall_quality >= 8.0
+        summary_parts = [
+            f"=== 多层级编排汇总报告 ===",
+            f"计划ID: {plan_id}",
+            f"执行时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
+            f"质量评分: {overall_quality:.1f}/10",
+            f"质量状态: {'通过' if passed else '未达标'}",
+            "",
+            "--- 各层级结果 ---",
+        ]
+        for r in results:
+            summary_parts.append(f"\n[{r.get('agent','supervisor')}] 任务: {r.get('task_id','')} 质量: {r.get('quality_score',0.0):.1f}")
+            txt = r.get("result", "")
+            if txt:
+                summary_parts.append(f"内容摘要: {txt[:300]}...")
+        if all_text_parts:
+            summary_parts.append("")
+            summary_parts.append("--- 完整文本 ---")
+            summary_parts.extend(all_text_parts)
+
+        output_dir = ""
+        summary_file_info = None
+        if output_mgr is not None:
+            output_dir = str(output_mgr.output_dir)
+            summary_file_info = output_mgr.generate_summary_md(results, requirement)
+
+        ret = {
+            "task_id": plan_id,
+            "agent": "supervisor",
+            "summary": "\n".join(summary_parts),
+            "result": "\n\n".join(all_text_parts),
+            "quality_score": overall_quality,
+            "passed": passed,
+            "source": "hierarchy_recursive",
+            "depth": depth,
+            "output_dir": output_dir,
+            "files": all_files,
+            "sub_results": results,
+        }
+        if summary_file_info:
+            ret["summary_file"] = summary_file_info.to_dict()
+        return ret
 
     def _evaluate_overall_quality(self, results: list[dict]) -> float:
         """评估整体质量分数（所有 Worker 结果的平均分）。"""

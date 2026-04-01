@@ -55,6 +55,15 @@ USER_PROJECTS: list[str] = ["人工智能", "深度学习", "计算机视觉", "
 LANGSMITH_PROJECT: str = "deepseek-rag-agent"
 LANGSMITH_TRACING: bool = bool(LANGSMITH_API_KEY)
 
+# ── P2 Feature Flags ────────────────────────────────────────────────────────
+# 渐进式开启：默认全部 False，逐步在 .env 中设置 ENABLE_xxx=true 启用
+ENABLE_LANGSMITH: bool = os.getenv("ENABLE_LANGSMITH", "false").lower() == "true"
+ENABLE_EPISODIC_MEMORY: bool = os.getenv("ENABLE_EPISODIC_MEMORY", "false").lower() == "true"
+ENABLE_HIERARCHICAL_ORCHESTRATION: bool = os.getenv(
+    "ENABLE_HIERARCHICAL_ORCHESTRATION", "false"
+).lower() == "true"
+ENABLE_MCP_SERVER: bool = os.getenv("ENABLE_MCP_SERVER", "false").lower() == "true"
+
 # ── Model Providers ─────────────────────────────────────────────────────────
 # Maps provider ID → config dict
 # api_key is loaded at runtime (may be overridden via /api/config/update)
@@ -129,6 +138,14 @@ def is_provider_configured(provider: str) -> bool:
     """Return True if the provider has a non-empty API key."""
     return bool(get_runtime_api_key(provider))
 
+
+# ── Thread Pool Config ─────────────────────────────────────────────────────────
+# Dedicated thread pools to decouple long-running LLM/DB/vector operations
+# from FastAPI's async event loop, enabling true concurrent task execution.
+THREAD_POOL_LLM_SIZE: int = int(os.getenv("THREAD_POOL_LLM_SIZE", "4"))
+THREAD_POOL_DB_SIZE: int = int(os.getenv("THREAD_POOL_DB_SIZE", "8"))
+THREAD_POOL_VECTOR_SIZE: int = int(os.getenv("THREAD_POOL_VECTOR_SIZE", "4"))
+CHAT_TASK_TIMEOUT: int = int(os.getenv("CHAT_TASK_TIMEOUT", "300"))  # seconds
 
 # ── Validation ───────────────────────────────────────────────────────────────
 if not DEEPSEEK_API_KEY:

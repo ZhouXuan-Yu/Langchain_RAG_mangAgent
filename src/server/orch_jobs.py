@@ -1,16 +1,21 @@
 """编排后台任务管理器 — 支持任务在后台运行，前端实时订阅 SSE 事件流."""
 
 import asyncio
-import json
 import logging
+import os
+import time
+import traceback
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+from src.graph.orchestrator import CrayfishOrchestrator
 
 
 class JobStatus(str, Enum):
@@ -138,103 +143,153 @@ def get_job_manager() -> BackgroundJobManager:
 
 # ── 后台任务运行器 ───────────────────────────────────────────────────────────
 
-async def _run_orchestrator_job(job: BackgroundJob) -> None:
+
+def _sync_orchestrate_wrapper(orchestrator, job) -> None:
     """
-    在后台 asyncio.Task 中运行编排器。
-    运行完成后将最终结果写入 job.result，并在每个事件上更新 worker_state。
+    Synchronous wrapper that runs the async orchestrate() coroutine in a thread.
+    This lets asyncio.run() manage the event loop for this thread.
     """
-    from src.graph.orchestrator import CrayfishOrchestrator
+    import asyncio as _asyncio
 
-    _last_kanban_update: float = 0.0
+    async def _async_inner():
+        _last_kanban_update: float = 0.0
 
-    async def _sync_kanban(status: str, result: str | None = None, error: str | None = None) -> None:
-        """更新任务协调看板（节流：每秒最多一次）。"""
-        nonlocal _last_kanban_update
-        if not job.kanban_task_id:
-            return
-        import time
-        now = time.monotonic()
-        if now - _last_kanban_update < 1.0 and status not in ("done", "failed", "cancelled"):
-            return
-        _last_kanban_update = now
-        from src.server.task_scheduler import get_scheduler
-        scheduler = get_scheduler()
-        scheduler.update(
-            job.kanban_task_id,
-            status=status,
-            result=result,
-            error=error,
-        )
-
-    try:
-        job.status = JobStatus.RUNNING
-        await _sync_kanban("running")
+        async def _sync_kanban(status: str, result: str | None = None, error: str | None = None) -> None:
+            nonlocal _last_kanban_update
+            if not job.kanban_task_id:
+                return
+            import time as _time
+            now = _time.monotonic()
+            if now - _last_kanban_update < 1.0 and status not in ("done", "failed", "cancelled"):
+                return
+            _last_kanban_update = now
+            from src.server.task_scheduler import get_scheduler
+            scheduler = get_scheduler()
+            scheduler.update(
+                job.kanban_task_id,
+                status=status,
+                result=result,
+                error=error,
+            )
 
         async def progress_callback(event: dict) -> None:
             if job.cancel_event.is_set():
-                raise asyncio.CancelledError("Job cancelled by user")
+                raise _asyncio.CancelledError("Job cancelled by user")
             ev_type = event.get("type", "message")
             job.add_event(ev_type, event)
             _update_worker_state(job, ev_type, event)
-            # #region agent log
+            # CRITICAL: update BackgroundJob object state so SSE endpoint can read it
             if ev_type == "final_result":
+                job.result = {
+                    "summary":          event.get("summary", ""),
+                    "quality_score":    event.get("quality_score", 0),
+                    "passed":           event.get("passed", False),
+                    "loop_count":       event.get("loop_count", 0),
+                    "healing_attempts": event.get("healing_attempts", 0),
+                    "plan_id":          event.get("plan_id", ""),
+                    "output_dir":       event.get("output_dir", ""),
+                    "files":            event.get("files", []),
+                    "summary_file":     event.get("summary_file"),
+                }
+                # B6: log final_result to debug file
                 try:
-                    _dbg_p = __import__("pathlib").Path(__file__).resolve().parents[2] / "debug-6ba534.log"
-                    _evf = event.get("files")
-                    _rf = (job.result or {}).get("files")
-                    _dbg_payload = {
-                        "sessionId": "6ba534", "hypothesisId": "H2", "location": "orch_jobs.py:after_final_result",
-                        "message": "final_result persisted", "timestamp": int(__import__("time").time() * 1000),
+                    import json as _json, datetime as _dt
+                    _LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "debug-d85885.log")
+                    _entry = {
+                        "sessionId": "d85885", "runId": "debug-run",
+                        "hypothesisId": "B6-files",
+                        "location": "orch_jobs.py:progress_callback",
+                        "message": "B6: final_result received",
                         "data": {
-                            "job_id": job.job_id,
-                            "event_n_files": len(_evf) if isinstance(_evf, list) else repr(type(_evf)),
-                            "job_result_n_files": len(_rf) if isinstance(_rf, list) else repr(type(_rf)),
-                            "job_result_keys": list((job.result or {}).keys()),
+                            "output_dir": event.get("output_dir", ""),
+                            "nFiles": len(event.get("files") or []),
+                            "fileNames": [f.get("filename","?") for f in (event.get("files") or [])],
+                            "plan_id": event.get("plan_id", ""),
                         },
+                        "timestamp": int(_dt.datetime.now().timestamp() * 1000),
                     }
-                    _dbg_p.open("a", encoding="utf-8").write(json.dumps(_dbg_payload, ensure_ascii=False) + "\n")
+                    with open(_LOG_PATH, "a", encoding="utf-8") as _f:
+                        _f.write(_json.dumps(_entry, ensure_ascii=False) + "\n")
                 except Exception:
                     pass
-            # #endregion
-            # 节流更新看板进度
-            await _sync_kanban(
-                "running",
-                result=_format_progress(job.worker_state),
+            if job.status != JobStatus.RUNNING:
+                job.status = JobStatus.RUNNING
+            await _sync_kanban("running", result=_format_progress(job.worker_state))
+
+        try:
+            result = await orchestrator.orchestrate(
+                requirement=job.requirement,
+                enabled_agents=job.enabled_agents,
+                quality_threshold=job.quality_threshold,
+                progress_callback=progress_callback,
+                participants=job.participants,
             )
+            if not job.cancel_event.is_set():
+                job.result = result or {}
+                job.status = JobStatus.DONE
+        except _asyncio.CancelledError:
+            job.set_cancelled()
+        except Exception as e:
+            tb = traceback.format_exc()
+            job.set_failed(str(e))
+            job.add_event("error", {
+                "type": "error",
+                "message": f"[编排失败] {e}",
+            })
+            # Write full traceback to debug log
+            _LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "debug-d85885.log")
+            try:
+                import json as _json
+                import datetime as _dt
+                entry = {
+                    "sessionId": "d85885",
+                    "runId": "debug-run",
+                    "hypothesisId": "B1-orchjobs",
+                    "location": "orch_jobs.py:_sync_orchestrate_wrapper",
+                    "message": "[编排失败] exception traceback",
+                    "data": {"error_type": type(e).__name__, "error": str(e), "traceback": tb},
+                    "timestamp": int(_dt.datetime.now().timestamp() * 1000),
+                }
+                with open(_LOG_PATH, "a", encoding="utf-8") as _f:
+                    _f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
 
-        orchestrator = CrayfishOrchestrator()
+    try:
+        _asyncio.run(_async_inner())
+    except Exception as _e:
+        import traceback as _tb
+        logger.error("orch_jobs:_sync_orchestrate_wrapper exception: %s", _e)
+        try:
+            job.set_failed(str(_e))
+        except Exception:
+            pass
 
-        await orchestrator.orchestrate(
-            requirement=job.requirement,
-            enabled_agents=job.enabled_agents,
-            quality_threshold=job.quality_threshold,
-            progress_callback=progress_callback,
-            participants=job.participants,
-        )
+    # (exit implicit on return)
 
-        if not job.cancel_event.is_set():
-            job.status = JobStatus.DONE
-            await _sync_kanban(
-                "done",
-                result=_format_result(job.result),
-            )
 
-    except asyncio.CancelledError:
-        job.set_cancelled()
-        await _sync_kanban("cancelled", error="Cancelled by user")
-        logger.info(f"[orch_jobs] job {job.job_id} cancelled")
+async def _run_orchestrator_job(job: BackgroundJob) -> None:
+    """
+    启动编排任务 — 委托给 _sync_orchestrate_wrapper 在线程池中执行。
 
+    _sync_orchestrate_wrapper 在其内部的 asyncio.run() 中：
+      1. 运行 orchestrator.orchestrate()
+      2. 通过 progress_callback 更新 job.result / job.status（供 SSE 读取）
+      3. 通过 _sync_kanban 更新 SQLite 看板
+    """
+    orchestrator = CrayfishOrchestrator()
+
+    try:
+        # 使用 asyncio.to_thread 运行同步包装器
+        # 注意：这是 Python 的默认线程池，不是 llm_pool，
+        # 但它只是承载 asyncio.run()，LLM 调用仍在 orchestrator 内部进行。
+        await asyncio.to_thread(_sync_orchestrate_wrapper, orchestrator, job)
     except Exception as e:
-        job.set_failed(str(e))
-        job.add_event("error", {
-            "type": "error",
-            "message": f"[编排失败] {e}",
-        })
-        await _sync_kanban("failed", error=str(e))
-        logger.error(f"[orch_jobs] job {job.job_id} failed: {e}", exc_info=True)
-    finally:
-        # Log job completion
-        logger.info(f"[orch_jobs] job {job.job_id} finished with status {job.status.value}")
+        logger.error("orch_jobs:_run_orchestrator_job failed: %s", e)
+        try:
+            job.set_failed(str(e))
+        except Exception:
+            pass
 
 
 def _update_worker_state(job: BackgroundJob, ev_type: str, event: dict) -> None:

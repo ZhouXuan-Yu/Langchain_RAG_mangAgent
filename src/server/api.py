@@ -57,6 +57,7 @@ from src.server.dependencies import (
     _current_temperature,
     _current_max_tokens,
 )
+from src.server.chat_task_executor import get_chat_executor
 from src.tools.memory_tools import get_memory_store
 from src.memory.sqlite_store import get_session_detail, save_tool_event, upsert_session, update_session_message_count
 from src.utils.token_tracker import TokenTracker
@@ -107,141 +108,113 @@ def _build_available_models_response() -> list[dict]:
 #  对话端点（核心）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post("/chat/stream")
-async def chat_stream(req: ChatRequest) -> StreamingResponse:
-    """SSE 流式对话 — 实时推送 token 和工具调用事件。"""
+# ═══════════════════════════════════════════════════════════════════════════════
+#  POST /chat/stream      → 提交聊天任务，立即返回 job_id
+#  GET  /chat/stream/{job_id}  → SSE 流式获取聊天结果
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        model = req.model or get_current_model()
-        agent = await get_agent(model)
-        config = {"configurable": {"thread_id": req.thread_id}}
 
-        # 首次发消息 → 创建/更新 session 记录
-        thread_id = req.thread_id
-        title_hint = req.message[:60] if req.message else ""
-        await asyncio.to_thread(upsert_session, thread_id, title_hint)
-        logger.info("[H1] upsert_session called thread_id=%s title_hint=%s", thread_id, title_hint[:30] if title_hint else "")
+@router.get("/chat/stream/{job_id}")
+async def chat_stream_sse(job_id: str) -> StreamingResponse:
+    """
+    SSE 流式获取聊天结果 — 轮询 ResultStore，增量推送 chunks。
 
-        # on_tool_start / on_tool_end 对同一 run_id 各应推送一次；此前共用 dedup 导致
-        # tool_result 永远被跳过，前端卡片一直停在「等待结果」。
+    前端应连接此端点（而非 POST /chat/stream）以获得流式体验。
+    """
+    async def generate():
+        last_chunk_idx = 0
         seen_tool_starts: set[str] = set()
         seen_tool_ends: set[str] = set()
 
-        # turn/step 计数器：用于记录会话页展开所需的工具调用次序
-        cur_turn: int = 0
-        cur_step: int = 0
+        while True:
+            result = await get_chat_executor().get_result(job_id)
 
-        def _event_run_id(ev: dict) -> str:
-            rid = ev.get("run_id")
-            return str(rid) if rid else ""
+            status = result.get("status", "pending")
 
-        try:
-            # ── 使用 astream_events (version="v2") 捕获所有流式事件 ─────────────
-            # 每个事件: {"event": str, "run_id": str, "data": {...}, ...}
-            async for event in agent.astream_events(
-                {"messages": [HumanMessage(content=req.message)], "thread_id": req.thread_id},
-                config=config,
-                version="v2",
-            ):
-                ev_type = event.get("event", "")
-
-                # ── LLM 开始生成 ───────────────────────────────────────────────────
-                if ev_type in ("on_chat_model_start", "chat_model_start"):
-                    pass  # noop
-
-                # ── 流式 token ───────────────────────────────────────────────────
-                elif ev_type in ("on_chat_model_stream", "chat_model_stream"):
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content") and chunk.content:
-                        content = chunk.content
-                        if isinstance(content, list):
-                            text_parts = []
-                            for part in content:
-                                if isinstance(part, str):
-                                    text_parts.append(part)
-                                elif isinstance(part, dict) and part.get("type") == "text":
-                                    text_parts.append(part.get("text") or "")
-                            content = "".join(text_parts)
-                        if content.strip().startswith("Human:"):
-                            cur_turn += 1
-                            cur_step = 0
-                        skip = (
-                            content.strip() in ("Tool", "Tool/use", "Invoking tool:", "=" * 20)
-                            or content.strip().startswith("=") and len(content.strip()) < 5
-                        )
-                        if not skip:
-                            yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
-
-                # ── 工具调用开始 ────────────────────────────────────────────────
-                elif ev_type == "on_tool_start":
-                    tool_name = event.get("name", "unknown")
-                    tool_input = event.get("data", {}).get("input", {})
-                    rid = _event_run_id(event)
-                    dedup_key = rid or f"{tool_name}:{json.dumps(tool_input, ensure_ascii=False)[:120]}"
-                    if dedup_key not in seen_tool_starts:
-                        seen_tool_starts.add(dedup_key)
-                        logger.info("[chat_stream] tool_start: %s", tool_name)
-                        yield f"data: {json.dumps({'type': 'tool', 'name': tool_name, 'input': tool_input, 'result': ''})}\n\n"
-                    # 持久化到 DB
-                    cur_step += 1
-                    await asyncio.to_thread(
-                        save_tool_event,
-                        thread_id, cur_turn, cur_step, 1,
-                        "tool_start", tool_name,
-                        json.dumps(tool_input, ensure_ascii=False)[:2000],
-                        "",
-                    )
-
-                # ── 工具调用结束 ────────────────────────────────────────────────
-                elif ev_type == "on_tool_end":
-                    tool_name = event.get("name", "unknown")
-                    raw_output = event.get("data", {}).get("output", "")
-                    if isinstance(raw_output, dict):
-                        tool_result = json.dumps(raw_output, ensure_ascii=False)
+            if status == "done":
+                # 推送剩余 chunks（包括可能的 tool 标记 chunks）
+                chunks = result.get("chunks", [])
+                for i in range(last_chunk_idx, len(chunks)):
+                    chunk = chunks[i]
+                    if isinstance(chunk, str):
+                        if chunk.startswith("[TOOL_START:"):
+                            name = chunk[len("[TOOL_START:"):-1]
+                            if name not in seen_tool_starts:
+                                seen_tool_starts.add(name)
+                                yield f"data: {json.dumps({'type': 'tool', 'name': name, 'input': {}, 'result': ''})}\n\n"
+                        elif chunk.startswith("[TOOL_END:"):
+                            pass  # 工具结果在 token chunks 中处理
+                        else:
+                            yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
                     else:
-                        tool_result = str(raw_output) if raw_output else ""
-                    rid = _event_run_id(event)
-                    dedup_key = rid or f"end:{tool_name}:{tool_result[:80]}"
-                    if dedup_key not in seen_tool_ends:
-                        seen_tool_ends.add(dedup_key)
-                        yield f"data: {json.dumps({'type': 'tool_result', 'name': tool_name, 'result': tool_result})}\n\n"
-                    # 持久化到 DB（seq=2 表示结果）
-                    await asyncio.to_thread(
-                        save_tool_event,
-                        thread_id, cur_turn, cur_step, 2,
-                        "tool_result", tool_name,
-                        "", tool_result[:5000],
-                    )
+                        yield f"data: {json.dumps({'type': 'token', 'content': str(chunk)})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'content': ''})}\n\n"
+                break
 
-                # ── LLM 完整回复结束（捕获 token 用量并写入 tracker）───────────────
-                elif ev_type in ("on_chat_model_end", "chat_model_end"):
-                    output = event.get("data", {}).get("output")
-                    if output is not None:
-                        um = getattr(output, "usage_metadata", None) or {}
-                        if isinstance(um, dict):
-                            prompt_tokens = max(0, (um.get("input_tokens", 0) or 0) - ((um.get("input_token_details", {}) or {}).get("cache_read", 0) or 0))
-                            completion_tokens = um.get("output_tokens", 0) or 0
-                            rm = getattr(output, "response_metadata", None) or {}
-                            model_name = (rm.get("model_name", "") if isinstance(rm, dict) else "") or req.model or get_current_model()
-                            _token_tracker.record(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, model=model_name, label="llm_call")
+            elif status == "failed":
+                error = result.get("error", "Unknown error")
+                yield f"data: {json.dumps({'type': 'error', 'content': error})}\n\n"
+                break
 
-            # ── 推送完成信号 ─────────────────────────────────────────────────
-            yield f"data: {json.dumps({'type': 'done', 'content': ''})}\n\n"
-            # 更新会话消息计数
-            await asyncio.to_thread(update_session_message_count, thread_id)
+            elif status == "not_found":
+                yield f"data: {json.dumps({'type': 'error', 'content': f'Job {job_id} not found'})}\n\n"
+                break
 
-        except Exception as e:
-            logger.error(f"chat_stream error: {e}", exc_info=True)
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+            # 增量推送新 chunks
+            chunks = result.get("chunks", [])
+            while last_chunk_idx < len(chunks):
+                chunk = chunks[last_chunk_idx]
+                if isinstance(chunk, str):
+                    if chunk.startswith("[TOOL_START:"):
+                        name = chunk[len("[TOOL_START:"):-1]
+                        if name not in seen_tool_starts:
+                            seen_tool_starts.add(name)
+                            yield f"data: {json.dumps({'type': 'tool', 'name': name, 'input': {}, 'result': ''})}\n\n"
+                    elif chunk.startswith("[TOOL_END:"):
+                        name_end = chunk[len("[TOOL_END:"):].split(":", 1)
+                        name = name_end[0]
+                        result_snippet = name_end[1][:200] if len(name_end) > 1 else ""
+                        if name not in seen_tool_ends:
+                            seen_tool_ends.add(name)
+                            yield f"data: {json.dumps({'type': 'tool_result', 'name': name, 'result': result_snippet})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'token', 'content': str(chunk)})}\n\n"
+                last_chunk_idx += 1
+
+            await asyncio.sleep(0.1)
 
     return StreamingResponse(
-        event_generator(),
+        generate(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/chat/stream")
+async def chat_stream(req: ChatRequest) -> dict:
+    """
+    提交聊天任务到线程池，立即返回 job_id。
+    前端通过 GET /api/chat/stream/{job_id} 获取 SSE 流式结果。
+    """
+    # 创建 session 记录（在主线程执行，快速）
+    thread_id = req.thread_id
+    title_hint = req.message[:60] if req.message else ""
+    await asyncio.to_thread(upsert_session, thread_id, title_hint)
+    logger.info("[chat_stream] submitted thread_id=%s", thread_id)
+
+    # 提交到线程池
+    job_id = await get_chat_executor().submit(
+        message=req.message,
+        thread_id=thread_id,
+        model=req.model,
+    )
+
+    return {"job_id": job_id, "status": "queued"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -964,7 +937,6 @@ async def upload_document(
 ) -> DocumentUploadResponse:
     """上传文档：提取文本、分块、注入 ChromaDB."""
     from src.document_processor import (
-        _log,
         chunk_text,
         detect_doc_type,
         extract_text,
@@ -983,7 +955,6 @@ async def upload_document(
         size = len(content)
 
         logger.info(f"[upload] received file: {filename}, type: {doc_type}, size: {size} bytes")
-        _log("H_UPLOAD", "api.upload_document:enter", "enter", {"filename": filename, "doc_type": doc_type, "size": size})
 
         store = get_document_store()
         doc = store.save(filename=filename, doc_type=doc_type, size_bytes=size, content=content)
@@ -992,7 +963,6 @@ async def upload_document(
 
         try:
             text = extract_text(content, doc_type)
-            _log("H_EXTRACT", "api.upload_document:extract_text", "exit", {"doc_type": doc_type, "text_len": len(text or ""), "empty": not bool((text or "").strip())})
             logger.info(f"[upload] extracted text length: {len(text) if text else 0} chars")
             if not (text or "").strip():
                 err = "未能从文件中提取到文本（空文件、加密文档或缺少解析依赖）。"
@@ -1421,6 +1391,38 @@ async def download_orch_file(job_id: str, filename: str) -> StreamingResponse:
     )
 
 
+@router.post("/orchestrate/jobs/{job_id}/open-folder")
+async def open_orch_folder(job_id: str) -> dict:
+    """通过 OS 壳层打开产出文件夹（Windows: explorer, macOS: open, Linux: xdg-open）。"""
+    import platform, subprocess, shutil
+    from src.server.orch_jobs import get_job_manager
+
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    output_dir = job.result.get("output_dir", "") if job.result else ""
+    if not output_dir:
+        raise HTTPException(status_code=404, detail="No output directory")
+
+    from pathlib import Path
+    folder = Path(output_dir)
+    if not folder.exists():
+        raise HTTPException(status_code=404, detail="Output directory does not exist")
+
+    system = platform.system()
+    try:
+        if system == "Windows":
+            subprocess.Popen(["explorer", str(folder)], shell=False)
+        elif system == "Darwin":
+            subprocess.Popen(["open", str(folder)])
+        else:
+            subprocess.Popen(["xdg-open", str(folder)])
+        return {"ok": True, "path": str(folder)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open folder: {e}")
+
+
 @router.get("/orchestrate/jobs/{job_id}/download-all")
 async def download_all_orch_files(job_id: str) -> StreamingResponse:
     """打包下载所有产出文件（.zip）。"""
@@ -1512,3 +1514,140 @@ def _detect_file_type(filename: str) -> str:
         ".gif": "image", ".svg": "image", ".webp": "image",
     }
     return type_map.get(ext, "other")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  P2-C 可观测性 (编排统计 API)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/orchestrate/stats/overview", response_model=dict)
+async def get_orch_stats_overview(days: int = 30) -> dict:
+    """
+    获取编排统计概览（最近 N 天）。
+
+    返回总调用次数、总 token 消耗、总成本、job 数、agent 数。
+    """
+    from src.utils.token_tracker import AgentUsageStore
+    data = AgentUsageStore.get_overview(days=days)
+    data["period_days"] = days
+    # 确保所有字段有默认值
+    return {
+        "total_calls": data.get("total_calls") or 0,
+        "total_input_tokens": data.get("total_input_tokens") or 0,
+        "total_output_tokens": data.get("total_output_tokens") or 0,
+        "total_tokens": data.get("total_tokens") or 0,
+        "total_cost_usd": round(data.get("total_cost_usd") or 0.0, 6),
+        "avg_cost_per_call": round(data.get("avg_cost_per_call") or 0.0, 6),
+        "total_jobs": data.get("total_jobs") or 0,
+        "total_agents": data.get("total_agents") or 0,
+        "period_days": days,
+    }
+
+
+@router.get("/orchestrate/stats/agents", response_model=list[dict])
+async def get_orch_stats_by_agent(days: int = 30) -> list[dict]:
+    """
+    获取各 agent 的 token 消耗和成本统计（最近 N 天）。
+    """
+    from src.utils.token_tracker import AgentUsageStore
+    return AgentUsageStore.get_all_agents(days=days)
+
+
+@router.get("/orchestrate/stats/history", response_model=dict)
+async def get_orch_stats_history(limit: int = 50, offset: int = 0) -> dict:
+    """
+    获取编排任务历史（按 job_id 聚合，含各 agent 的 token 分布）。
+    """
+    from src.utils.token_tracker import AgentUsageStore
+    items = AgentUsageStore.get_job_history(limit=limit, offset=offset)
+    return {
+        "items": items,
+        "total": len(items),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  P2-A 长期记忆 (Episode 查询 API)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/orchestrate/episodes", response_model=list[dict])
+async def list_orch_episodes(limit: int = 20, offset: int = 0) -> list[dict]:
+    """
+    获取编排历史 episode 列表（最近 N 条）。
+    """
+    import sqlite3
+    from src.config import PROJECT_ROOT
+    from pathlib import Path
+
+    db_path = Path(PROJECT_ROOT / "data" / "agent_usage.db")
+    if not db_path.exists():
+        return []
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """SELECT * FROM agent_episodes
+               ORDER BY created_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/orchestrate/episodes/{episode_id}", response_model=dict)
+async def get_orch_episode(episode_id: str) -> dict:
+    """获取指定 episode 详情."""
+    import sqlite3
+    from src.config import PROJECT_ROOT
+    from pathlib import Path
+
+    db_path = Path(PROJECT_ROOT / "data" / "agent_usage.db")
+    if not db_path.exists():
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM agent_episodes WHERE id=?", (episode_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Episode not found")
+        return dict(row)
+    finally:
+        conn.close()
+
+
+@router.get("/orchestrate/episodes/similar", response_model=list[dict])
+async def query_similar_episodes(query: str, top_k: int = 3) -> list[dict]:
+    """
+    根据 requirement 文本模糊匹配相似的历史 episode。
+    """
+    import sqlite3
+    from src.config import PROJECT_ROOT
+    from pathlib import Path
+
+    db_path = Path(PROJECT_ROOT / "data" / "agent_usage.db")
+    if not db_path.exists():
+        return []
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        pattern = f"%{query[:50]}%"
+        rows = conn.execute(
+            """SELECT * FROM agent_episodes
+               WHERE requirement LIKE ?
+               ORDER BY quality_score DESC, created_at DESC
+               LIMIT ?""",
+            (pattern, top_k),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+

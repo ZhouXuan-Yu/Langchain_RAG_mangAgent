@@ -341,3 +341,81 @@ class OrchestrateRequest(BaseModel):
     )
     quality_threshold: float = Field(default=8.0, ge=0.0, le=10.0, description="质量阈值 0-10")
     thread_id: str = Field(default="orchestrate", description="会话 ID")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  P2-C 可观测性 (编排统计)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class OrchStatsOverview(BaseModel):
+    """GET /api/orchestrate/stats/overview 响应."""
+    total_calls: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    avg_cost_per_call: float = 0.0
+    total_jobs: int = 0
+    total_agents: int = 0
+    period_days: int = 30
+
+
+class OrchStatsAgentItem(BaseModel):
+    """单个 agent 的统计."""
+    agent_id: str
+    total_calls: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    avg_cost_per_call: float = 0.0
+    total_jobs: int = 0
+
+
+class OrchStatsHistoryItem(BaseModel):
+    """编排历史中单个 job 的聚合."""
+    job_id: str
+    first_call: str = ""
+    last_call: str = ""
+    total_calls: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    agents: list[dict] = Field(default_factory=list)
+
+
+class OrchStatsHistory(BaseModel):
+    """GET /api/orchestrate/stats/history 响应."""
+    items: list[OrchStatsHistoryItem] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  P2-A 长期记忆 (Episode)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class EpisodeItem(BaseModel):
+    """单个 episode."""
+    id: str
+    job_id: str
+    requirement: str
+    tasks: list[dict] = Field(default_factory=list)
+    results: list[dict] = Field(default_factory=list)
+    quality_score: float = 0.0
+    duration_ms: int = 0
+    agents_used: list[str] = Field(default_factory=list)
+    max_depth: int = 1
+    healing_attempts: int = 0
+    passed: bool = False
+    created_at: str = ""
+
+
+class EpisodeQueryResponse(BaseModel):
+    """GET /api/orchestrate/episodes 响应."""
+    items: list[EpisodeItem] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 20
+    offset: int = 0

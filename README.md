@@ -516,6 +516,14 @@ SQLite Checkpointer 支持断电恢复和会话回溯
 ![任务管理](Demophoto/b04943b5014ada196faf0c82e886f8c7.png)
 创建、监控、终止任务，支持实时状态更新
 
+#### 编排页面 - 任务流程配置
+![编排页面](Demophoto/002d8f2fb11e6e269fbf100df3d4446a.png)
+可视化编排多步骤任务流程，支持卡片式节点配置
+
+#### 会话历史 - 多会话管理
+![会话历史](Demophoto/d88f5d6e298354ce769ba3d1237de6b5.png)
+查看和管理历史对话记录，支持多会话并行
+
 #### 任务编排 - 多步骤编排
 ![任务编排](Demophoto/23255ce7d76ae1fa5cfaf57c6f1ebde6.png)
 可视化编排多步骤任务流程
@@ -656,7 +664,8 @@ del /f data\chroma_db\*.sqlite 2>nul /s
 | Phase 5 | ✅ 已完成 | 多 Agent 系统优化（消息总线 + DAG 依赖 + 能力路由） |
 | Phase 6 | ✅ 已完成 | 线程池架构 + 并发优化 + 前端编排增强 |
 | Phase 7 | ✅ 已完成 | 自愈机制增强 + 错误恢复 |
-| Phase 8 | 🚧 进行中 | 长期记忆 + 多级编排 + 可观测性 |
+| Phase 8 | ✅ 已完成 | 长期记忆（Episodic Memory）+ 可观测性 + Token 追踪 |
+| Phase 9 | 🚧 进行中 | 线程池隔离 + 异步任务执行 + 前端增强 |
 
 ### Phase 5 更新内容（2026-04-01）
 
@@ -778,15 +787,87 @@ del /f data\chroma_db\*.sqlite 2>nul /s
 
 **代码位置**：`src/graph/orchestrator.py`、`src/graph/prompt.py`
 
+### Phase 9 更新内容（2026-04-08）
+
+本次更新实现了三大核心功能：线程池隔离、跨会话长期记忆（Episodic Memory）、以及异步任务执行架构。
+
+#### 1. 线程池隔离架构 ✅
+
+**问题背景**：FastAPI 异步事件循环与 LLM 同步调用之间的竞争问题。
+
+**解决方案**：三层隔离架构
+- **L1 事件循环层** — FastAPI/Uvicorn 主事件循环处理 HTTP 请求
+- **L2 线程池层** — LLM 调用、数据库操作、向量检索各自独立线程池
+- **L3 任务队列层** — 任务入队、按优先级调度
+
+**新增文件**：
+- `src/utils/thread_pool_manager.py` — 全局线程池生命周期管理器
+  - `llm_pool`：LLM 推理调用（网络 I/O + JSON 解析）
+  - `db_pool`：SQLite / 文件 I/O 操作
+  - `vector_pool`：ChromaDB / embedding 操作
+
+#### 2. 异步任务执行器 ✅
+
+**新增文件**：`src/server/chat_task_executor.py`
+
+**核心能力**：
+- `ChatTaskExecutor` — 在 LLM 线程池中运行 agent.astream_events()
+- 支持任务提交（`submit`）、结果查询（`get_result`）、任务取消（`cancel`）
+- SSE 流式推送 — 前端实时显示工具调用和模型响应
+- 事件去重 — 避免重复的工具开始/结束标记
+
+**新增文件**：`src/server/chat_result_store.py`
+
+**核心能力**：
+- 内存中的 asyncio.Lock 保护结果存储
+- TTL 自动清理（1小时后自动删除已完成/失败的任务）
+- 线程安全的 chunk 追加（使用 call_soon_threadsafe）
+
+#### 3. 跨会话长期记忆（Episodic Memory） ✅
+
+**新增文件**：`src/memory/episode_store.py`
+
+**四层记忆架构**：
+| 层级 | 名称 | 生命周期 | 技术选型 |
+|------|------|----------|----------|
+| L1 | Session Memory | 单次编排 | 当前 `all_results` 内存 |
+| L2 | Working Memory | 单次编排，Agent 间共享 | `AgentMessageBus._results` |
+| L3 | Episodic Memory | 跨会话，事件序 | SQLite `agent_episodes` 表 |
+| L4 | Semantic Memory | 跨会话，向量检索 | ChromaDB（已有） |
+
+**核心能力**：
+- `save()` — 保存编排 episode（含任务清单、执行结果、质量评分、耗时）
+- `get_recent()` — 获取最近的 N 条 episode
+- `query_similar()` — 模糊匹配相似的历史 episode（关键词分词 + LIKE 匹配）
+- `get_stats()` — 全局 episode 统计（平均质量分、平均耗时、通过率）
+- `get_agent_usage_ranking()` — 跨 episode 的 agent 使用频率排名
+
+**数据库表**：`agent_episodes`
+```sql
+CREATE TABLE agent_episodes (
+    id TEXT PRIMARY KEY,
+    job_id TEXT,
+    requirement TEXT,
+    tasks JSON,
+    results JSON,
+    quality_score REAL,
+    duration_ms INTEGER,
+    agents_used JSON,
+    max_depth INTEGER,
+    healing_attempts INTEGER,
+    passed INTEGER,
+    created_at TEXT
+);
+```
+
 ### Phase 8 待实施
 
 | 模块 | 说明 |
 |------|------|
-| 长期记忆（Episodic Memory） | 跨会话状态共享，L3 事件序 + L4 向量检索 |
 | 多级编排（递归 Supervisor） | 总任务 → 子任务 → 孙任务，最多 3 层 |
 | 可观测性（LangSmith） | 分布式追踪 + Token 成本追踪 |
 | MCP 协议集成 | 工具动态发现与按需绑定 |
 
 ---
 
-*文档最后更新：2026-04-03*
+*文档最后更新：2026-04-08*
