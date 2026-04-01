@@ -94,6 +94,8 @@ class TaskItem(dict):
         worker_kind: str | None = None,
         depends_on: list[str] | None = None,
         execution_mode: str = "parallel",
+        output_type: str = "search_only",
+        suggested_filename: str = "",
     ):
         dict.__init__(self, {
             "task_id": task_id,
@@ -102,6 +104,8 @@ class TaskItem(dict):
             "worker_kind": worker_kind,
             "depends_on": depends_on or [],       # 前置任务 ID 列表
             "execution_mode": execution_mode,       # parallel | sequential
+            "output_type": output_type,             # code | html | markdown | doc | data | report | search_only | mixed
+            "suggested_filename": suggested_filename,
             "status": TASK_STATUS_PENDING,
             "result": None,
             "quality_score": 0.0,
@@ -446,6 +450,8 @@ class CrayfishOrchestrator:
                             continue
                     depends_on = t.get("depends_on") or []
                     execution_mode = t.get("execution_mode") or "parallel"
+                    output_type = t.get("output_type") or "search_only"
+                    suggested_filename = t.get("suggested_filename") or ""
                     result.append(TaskItem(
                         task_id,
                         t.get("description", ""),
@@ -453,6 +459,8 @@ class CrayfishOrchestrator:
                         wk,
                         depends_on=depends_on,
                         execution_mode=execution_mode,
+                        output_type=output_type,
+                        suggested_filename=suggested_filename,
                     ))
                 logger.info(f"[orchestrator] plan created: {len(result)} tasks")
                 return result
@@ -482,11 +490,14 @@ class CrayfishOrchestrator:
         if "search_worker" in enabled_kinds:
             search_keywords = ["search", "搜索", "查找", "调研", "latest", "2025", "2026", "bug", "版本", "用法", "如何"]
             if any(k in req_lower for k in search_keywords):
+                output_type = "markdown" if any(k in req_lower for k in ["报告", "调研", "文档", "分析"]) else "search_only"
                 tasks.append(TaskItem(
                     f"task_{uuid.uuid4().hex[:6]}",
                     requirement,
                     "agent_worker_search",
                     "search_worker",
+                    output_type=output_type,
+                    suggested_filename="research_report.md" if output_type == "markdown" else "",
                 ))
 
         if "rag_worker" in enabled_kinds:
@@ -497,16 +508,26 @@ class CrayfishOrchestrator:
                     requirement,
                     "agent_worker_rag",
                     "rag_worker",
+                    output_type="markdown",
+                    suggested_filename="knowledge_summary.md",
                 ))
 
         if "coder" in enabled_kinds:
             code_keywords = ["代码", "生成", "写", "实现", "函数", "class", "def "]
             if any(k in req_lower for k in code_keywords):
+                ext = ".py"
+                if "html" in req_lower or "网页" in req_lower:
+                    ext = ".html"
+                elif "javascript" in req_lower or "js" in req_lower:
+                    ext = ".js"
+                output_type = "code"
                 tasks.append(TaskItem(
                     f"task_{uuid.uuid4().hex[:6]}",
                     requirement,
                     "agent_worker_coder",
                     "coder",
+                    output_type=output_type,
+                    suggested_filename=f"generated_code{ext}",
                 ))
 
         # 若无匹配，遍历所有已注册的自定义 agent（排除 agent_main 和内置）
@@ -550,8 +571,9 @@ class CrayfishOrchestrator:
         task: TaskItem,
         context: list[dict] | None = None,
         progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+        output_mgr=None,
     ) -> dict:
-        """执行单个 Worker 任务。路由依据 worker_kind 字段，支持 context 注入。"""
+        """执行单个 Worker 任务。路由依据 worker_kind 字段，支持 context 和文件输出。"""
         from src.graph.workers import SearchWorker, RAGWorker, CoderWorker
 
         task_id = task["task_id"]
@@ -568,15 +590,15 @@ class CrayfishOrchestrator:
         try:
             if wk == "search_worker":
                 worker = SearchWorker()
-                result = await worker.execute(task, progress_callback)
+                result = await worker.execute(task, progress_callback, output_manager=output_mgr)
             elif wk == "rag_worker":
                 worker = RAGWorker()
-                result = await worker.execute(task, progress_callback)
+                result = await worker.execute(task, progress_callback, output_manager=output_mgr)
             elif wk == "coder":
                 worker = CoderWorker()
-                result = await worker.execute(task, context, progress_callback)
+                result = await worker.execute(task, context, progress_callback, output_manager=output_mgr)
             else:
-                result = await self._execute_generic_task(task, context, progress_callback)
+                result = await self._execute_generic_task(task, context, progress_callback, output_mgr=output_mgr)
 
             await self._emit(progress_callback, {
                 "type": "worker_done",
@@ -606,6 +628,7 @@ class CrayfishOrchestrator:
                 "quality_score": 0.0,
                 "source": "error",
                 "raw_data": str(e),
+                "files": [],
             }
 
     async def _dispatch_generic(
@@ -660,6 +683,7 @@ class CrayfishOrchestrator:
         task: TaskItem,
         context: list[dict] | None = None,
         progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+        output_mgr=None,
     ) -> dict:
         """
         通用 Agent 执行器 — 处理所有非内置 worker_kind。
@@ -825,8 +849,17 @@ class CrayfishOrchestrator:
         results: list[dict],
         quality_score: float,
         passed: bool,
+        output_mgr=None,
+        requirement: str = "",
     ) -> dict:
-        """构建最终汇总报告。"""
+        """
+        构建最终汇总报告。
+
+        关键改进：
+        - 不再截断 raw_data，保留完整内容（或引用文件路径）
+        - 通过 output_mgr 生成 SUMMARY.md
+        - 在返回结果中包含 output_dir 和 files 列表
+        """
         lines = [
             "=== Crayfish 多 Agent 编排汇总报告 ===",
             f"计划ID: {self.plan_id}",
@@ -835,17 +868,49 @@ class CrayfishOrchestrator:
             f"质量状态: {'通过' if passed else '未达标'}",
             f"循环次数: {self.loop_count}",
             "",
-            "--- 各 Worker 结果 ---",
         ]
 
+        # ── 收集所有文件信息 ───────────────────────────────────────────────
+        all_files: list[dict] = []
+        for result in results:
+            files = result.get("files", [])
+            if files:
+                all_files.extend(files)
+
+        # ── 汇总产出文件 ─────────────────────────────────────────────────
+        if all_files:
+            lines.append("--- 产出文件 ---")
+            for f in all_files:
+                fname = f.get("filename", "?")
+                ftype = f.get("file_type", "?")
+                agent = f.get("agent_id", "?")
+                lines.append(f"  - [{ftype}] {fname} (by {agent})")
+            lines.append("")
+
+        # ── 各 Worker 结果摘要（不再截断 raw_data）────────────────────────
+        lines.append("--- 各 Worker 结果 ---")
         for result in results:
             agent = result.get("agent", "unknown")
             score = result.get("quality_score", 0.0)
-            raw = result.get("raw_data", result.get("result", ""))[:500]
-            lines.append(f"\n[{agent}] 质量: {score:.1f}")
-            lines.append(f"内容: {raw}")
+            task_id = result.get("task_id", "")
+            files = result.get("files", [])
 
-        # 冲突检测
+            lines.append(f"\n[{agent}] 任务: {task_id} 质量: {score:.1f}")
+
+            # 如果有文件输出，优先引用文件路径
+            if files:
+                for f in files:
+                    lines.append(f"  文件: {f.get('filename', '?')} ({f.get('file_type', '?')})")
+                    lines.append(f"  路径: {f.get('file_path', '?')}")
+            else:
+                # 无文件时，显示 raw_data 完整内容（不截断）
+                raw = result.get("raw_data", result.get("result", ""))
+                # 但为防止 summary 本身过长，对 raw_data 做一个宽松截断（10k字符）
+                if len(raw) > 10240:
+                    raw = raw[:10240] + "\n\n[内容过长，已截断至10KB，完整内容见产出文件]"
+                lines.append(f"内容: {raw}")
+
+        # ── 冲突检测 ──────────────────────────────────────────────────────
         from src.graph.conflict_resolver import detect_conflict, DataEntry
 
         entries: list[DataEntry] = []
@@ -861,14 +926,33 @@ class CrayfishOrchestrator:
 
         summary = "\n".join(lines)
 
-        return {
+        # ── 生成 SUMMARY.md ───────────────────────────────────────────────
+        output_dir = ""
+        files_info = all_files
+        summary_file = None
+
+        if output_mgr is not None:
+            output_dir = str(output_mgr.output_dir)
+            # 生成 SUMMARY.md
+            summary_file = output_mgr.generate_summary_md(results, requirement)
+            if summary_file:
+                files_info = output_mgr.list_files()
+
+        result_dict: dict = {
             "summary": summary,
             "quality_score": quality_score,
             "passed": passed,
             "loop_count": self.loop_count,
             "results": results,
             "plan_id": self.plan_id,
+            "output_dir": output_dir,
+            "files": files_info,
         }
+
+        if summary_file:
+            result_dict["summary_file"] = summary_file.to_dict()
+
+        return result_dict
 
     @staticmethod
     def _extract_json(text: str) -> str | None:

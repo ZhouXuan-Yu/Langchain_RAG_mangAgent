@@ -262,6 +262,9 @@ def _update_worker_state(job: BackgroundJob, ev_type: str, event: dict) -> None:
             "passed":           event.get("passed", False),
             "loop_count":       event.get("loop_count", 0),
             "healing_attempts": event.get("healing_attempts", 0),
+            "output_dir":       event.get("output_dir", ""),
+            "files":            event.get("files", []),
+            "summary_file":     event.get("summary_file"),
         }
 
 

@@ -319,6 +319,97 @@
       line-height: 1.65; color: var(--noir-text);
       white-space: pre-wrap; word-break: break-word;
     }
+    /* 文件列表区域 */
+    .orch-files-section {
+      margin-bottom: 16px; padding-bottom: 16px;
+      border-bottom: 1px solid var(--noir-border);
+    }
+    .orch-files-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .orch-files-title {
+      font-family: 'Courier Prime', monospace; font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--noir-dim);
+    }
+    .orch-files-actions { display: flex; gap: 6px; }
+    .orch-file-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; margin-bottom: 6px;
+      background: var(--noir-surface); border: 1px solid var(--noir-border);
+      border-radius: 7px; transition: border-color 150ms;
+    }
+    .orch-file-item:hover { border-color: var(--noir-border-hi); }
+    .orch-file-icon {
+      width: 30px; height: 30px; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; font-size: 14px;
+    }
+    .orch-file-icon.code   { background: rgba(52,211,153,0.15); }
+    .orch-file-icon.html   { background: rgba(251,191,36,0.15); }
+    .orch-file-icon.markdown { background: rgba(147,197,253,0.15); }
+    .orch-file-icon.data   { background: rgba(167,139,250,0.15); }
+    .orch-file-icon.other  { background: rgba(148,163,184,0.15); }
+    .orch-file-info { flex: 1; min-width: 0; }
+    .orch-file-name {
+      font-family: 'Courier Prime', monospace; font-size: 12px;
+      color: var(--noir-text); font-weight: 600;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .orch-file-meta {
+      font-family: 'Courier Prime', monospace; font-size: 10px;
+      color: var(--noir-muted); margin-top: 2px;
+    }
+    .orch-file-btns { display: flex; gap: 5px; flex-shrink: 0; }
+    .orch-file-btn {
+      padding: 4px 9px; border-radius: 5px; border: 1px solid var(--noir-border);
+      background: var(--noir-surface); color: var(--noir-text);
+      font-size: 10px; font-family: var(--font-sans); cursor: pointer;
+      transition: all 120ms;
+    }
+    .orch-file-btn:hover { border-color: var(--noir-accent-hi); color: var(--noir-accent-hi); }
+    .orch-file-btn.preview { border-color: rgba(139,0,0,0.4); color: #c0392b; }
+    .orch-file-btn.preview:hover { background: rgba(139,0,0,0.15); }
+    /* 文件预览模态框 */
+    .orch-file-modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 300;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; visibility: hidden; transition: opacity 200ms;
+    }
+    .orch-file-modal-backdrop.open { opacity: 1; visibility: visible; }
+    .orch-file-modal {
+      width: min(85vw, 1000px); max-height: 85vh;
+      background: var(--noir-card); border: 1px solid var(--noir-border);
+      border-radius: 12px; display: flex; flex-direction: column;
+    }
+    .orch-file-modal-header {
+      flex-shrink: 0; display: flex; align-items: center;
+      justify-content: space-between; padding: 14px 18px;
+      border-bottom: 1px solid var(--noir-border);
+    }
+    .orch-file-modal-name {
+      font-family: 'Courier Prime', monospace; font-size: 13px;
+      font-weight: 600; color: var(--noir-text);
+    }
+    .orch-file-modal-meta { font-size: 10px; color: var(--noir-muted); margin-top: 2px; }
+    .orch-file-modal-actions { display: flex; gap: 8px; }
+    .orch-file-modal-body {
+      flex: 1; min-height: 0; overflow: auto; padding: 16px 18px;
+    }
+    .orch-file-modal-body::-webkit-scrollbar { width: 6px; }
+    .orch-file-modal-body::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+    .orch-file-modal-pre {
+      margin: 0; font-family: 'Courier Prime', monospace; font-size: 12px;
+      line-height: 1.65; color: var(--noir-text);
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .orch-file-modal-close {
+      width: 32px; height: 32px; border-radius: 6px; border: none;
+      background: transparent; color: var(--noir-dim); font-size: 20px;
+      line-height: 1; cursor: pointer;
+    }
+    .orch-file-modal-close:hover { color: var(--noir-text); }
     .orch-empty {
       display: flex; flex-direction: column; align-items: center;
       justify-content: center; flex: 1; color: var(--noir-muted);
@@ -456,6 +547,7 @@ var ORCHESTRATE_CONTENT = [
             '</div>',
             '<span class="artifact-chevron">&#8250;</span>',
           '</div>',
+          '<div id="orch-files-area" style="display:none;margin-top:10px;"></div>',
         '</div>',
 
       '</div>',
@@ -474,6 +566,23 @@ var ORCHESTRATE_CONTENT = [
     '</div>',
     '<div class="orch-drawer-body"><pre class="orch-drawer-pre" id="orch-drawer-pre"></pre></div>',
   '</aside>',
+  '<div class="orch-file-modal-backdrop" id="orch-file-modal-backdrop" onclick="if(event.target.id===\'orch-file-modal-backdrop\')closeFileModal()">',
+    '<div class="orch-file-modal">',
+      '<div class="orch-file-modal-header">',
+        '<div>',
+          '<div class="orch-file-modal-name" id="orch-file-modal-name"></div>',
+          '<div class="orch-file-modal-meta" id="orch-file-modal-meta"></div>',
+        '</div>',
+        '<div class="orch-file-modal-actions">',
+          '<button type="button" class="orch-file-btn" id="orch-file-modal-download-btn" onclick="downloadCurrentModalFile()">下载</button>',
+          '<button type="button" class="orch-file-modal-close" onclick="closeFileModal()">&times;</button>',
+        '</div>',
+      '</div>',
+      '<div class="orch-file-modal-body">',
+        '<pre class="orch-file-modal-pre" id="orch-file-modal-content"></pre>',
+      '</div>',
+    '</div>',
+  '</div>',
   '</div>'
 ].join('');
 
@@ -1063,6 +1172,171 @@ function onFinalResult(d) {
   updateStepStatus('final_result', 'done');
   onJobDone('done');
   refreshJobList();
+
+  // ── 渲染文件列表区域 ─────────────────────────────────────────────
+  _renderFileList(d, _selectedJobId);
+}
+
+// ── 文件列表渲染 ──────────────────────────────────────────────────────────
+var _currentModalFile = null; // 当前预览的文件信息
+
+function _renderFileList(d, jobId) {
+  var files = d.files || [];
+  var outputDir = d.output_dir || '';
+  var area = document.getElementById('orch-files-area');
+  if (!area) return;
+
+  if (!files || files.length === 0) {
+    area.style.display = 'none';
+    return;
+  }
+
+  area.style.display = '';
+
+  // Header with download-all button
+  var html = '<div class="orch-files-section">';
+  html += '<div class="orch-files-header">';
+  html += '<span class="orch-files-title">&#x1F4C2; 产出文件 (' + files.length + ')</span>';
+  html += '<div class="orch-files-actions">';
+  html += '<button type="button" class="orch-file-btn" onclick="downloadAllFiles(\'' + encodeURIComponent(jobId || '') + '\')">打包下载</button>';
+  if (outputDir) {
+    html += '<button type="button" class="orch-file-btn" onclick="openOutputFolder(\'' + encodeURIComponent(outputDir) + '\')">打开目录</button>';
+  }
+  html += '</div></div>';
+
+  // File items
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    var fname = f.filename || '?';
+    var ftype = f.file_type || 'other';
+    var size = f.size_display || f.size_bytes + 'B';
+    var agent = f.agent_id || '';
+    var desc = f.description || '';
+    var fpath = f.file_path || '';
+    var previewable = ftype === 'code' || ftype === 'html' || ftype === 'markdown' || ftype === 'data';
+
+    html += '<div class="orch-file-item">';
+    html += '<div class="orch-file-icon ' + ftype + '">';
+    html += _fileTypeIcon(ftype);
+    html += '</div>';
+    html += '<div class="orch-file-info">';
+    html += '<div class="orch-file-name" title="' + _escHtml(fname) + '">' + _escHtml(fname) + '</div>';
+    html += '<div class="orch-file-meta">' + size + ' \u00B7 ' + agent + (desc ? ' \u00B7 ' + _escHtml(desc.substring(0, 40)) : '') + '</div>';
+    html += '</div>';
+    html += '<div class="orch-file-btns">';
+    if (previewable) {
+      html += '<button type="button" class="orch-file-btn preview" onclick="previewFile(\'' + encodeURIComponent(jobId || '') + '\',\'' + encodeURIComponent(fname) + '\')">预览</button>';
+    }
+    html += '<button type="button" class="orch-file-btn" onclick="downloadFile(\'' + encodeURIComponent(jobId || '') + '\',\'' + encodeURIComponent(fname) + '\')">下载</button>';
+    html += '</div>';
+    html += '</div>';
+  }
+
+  html += '</div>';
+  area.innerHTML = html;
+}
+
+function _fileTypeIcon(ftype) {
+  var icons = {
+    code:     '\u{1F4BB}',
+    html:     '\u{1F310}',
+    markdown: '\u{1F4DD}',
+    data:     '\u{1F4BE}',
+    doc:      '\u{1F4C4}',
+    report:   '\u{1F4CA}',
+    other:    '\u{1F4C1}',
+  };
+  return icons[ftype] || icons.other;
+}
+
+function _escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function previewFile(jobId, filename) {
+  var jid = decodeURIComponent(jobId || '');
+  var fname = decodeURIComponent(filename || '');
+  if (!jid || !fname) return;
+
+  fetch('/api/orchestrate/jobs/' + encodeURIComponent(jid) + '/files/' + encodeURIComponent(fname))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) { toast('读取文件失败: ' + data.error, 'error'); return; }
+      _currentModalFile = { jobId: jid, filename: fname };
+      openFileModal(fname, data.content || '', data.file_type || 'other', data.size || 0);
+    })
+    .catch(function(e) { toast('预览失败: ' + e.message, 'error'); });
+}
+
+function openFileModal(fname, content, ftype, size) {
+  var backdrop = document.getElementById('orch-file-modal-backdrop');
+  var nameEl = document.getElementById('orch-file-modal-name');
+  var metaEl = document.getElementById('orch-file-modal-meta');
+  var contentEl = document.getElementById('orch-file-modal-content');
+
+  if (!backdrop) return;
+
+  if (nameEl) nameEl.textContent = fname;
+  if (metaEl) metaEl.textContent = _formatSize(size) + ' \u00B7 ' + ftype;
+  if (contentEl) {
+    contentEl.textContent = content;
+    // 代码高亮提示
+    if (ftype === 'code') {
+      contentEl.style.background = 'rgba(0,0,0,0.2)';
+      contentEl.style.padding = '12px';
+      contentEl.style.borderRadius = '6px';
+    } else {
+      contentEl.style.background = '';
+      contentEl.style.padding = '';
+      contentEl.style.borderRadius = '';
+    }
+  }
+  backdrop.classList.add('open');
+}
+
+function closeFileModal() {
+  var backdrop = document.getElementById('orch-file-modal-backdrop');
+  if (backdrop) backdrop.classList.remove('open');
+  _currentModalFile = null;
+}
+
+function downloadCurrentModalFile() {
+  if (_currentModalFile) {
+    downloadFile(_currentModalFile.jobId, _currentModalFile.filename);
+  }
+}
+
+function downloadFile(jobId, filename) {
+  var jid = decodeURIComponent(jobId || '');
+  var fname = decodeURIComponent(filename || '');
+  if (!jid || !fname) return;
+  window.open('/api/orchestrate/jobs/' + encodeURIComponent(jid) + '/download/' + encodeURIComponent(fname), '_blank');
+}
+
+function downloadAllFiles(jobId) {
+  var jid = decodeURIComponent(jobId || '');
+  if (!jid) return;
+  window.open('/api/orchestrate/jobs/' + encodeURIComponent(jid) + '/download-all', '_blank');
+}
+
+function openOutputFolder(outputDir) {
+  var dir = decodeURIComponent(outputDir || '');
+  if (!dir) return;
+  // Windows: use explorer
+  var win = window.navigator.userAgent.indexOf('Win') !== -1;
+  if (win) {
+    window.open('file:///' + dir.replace(/\\/g, '/'), '_blank');
+  } else {
+    toast('\u6253\u5f00\u76ee\u5f55: ' + dir, 'info');
+  }
+}
+
+function _formatSize(bytes) {
+  if (!bytes) return '0B';
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
 }
 
 function onJobDone(finalStatus) {
@@ -1192,6 +1466,10 @@ function clearResult() {
   if (ap) ap.textContent = '\u7b49\u5f85\u4efb\u52a1\u5b8c\u6210\u2026';
   var ac = document.getElementById('artifact-card');
   if (ac) ac.classList.add('disabled');
+  // 清空文件列表
+  var filesArea = document.getElementById('orch-files-area');
+  if (filesArea) { filesArea.style.display = 'none'; filesArea.innerHTML = ''; }
+  closeFileModal();
 }
 
 function clearInput() {

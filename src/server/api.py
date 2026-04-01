@@ -10,7 +10,7 @@ from typing import AsyncGenerator, Optional
 
 
 from fastapi import APIRouter, File, Form, HTTPException, Header, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
 
 from src.server.models import (
@@ -1332,3 +1332,179 @@ async def cancel_orch_job(job_id: str) -> dict:
     ok = get_job_manager().cancel_job(job_id)
     return {"job_id": job_id, "status": job.status.value, "cancelled": ok}
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  文件输出 API — 编排任务的产出文件
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/orchestrate/jobs/{job_id}/files")
+async def list_orch_files(job_id: str) -> dict:
+    """列出编排任务的产出文件列表。"""
+    from src.server.orch_jobs import get_job_manager
+
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if not job.result:
+        raise HTTPException(status_code=404, detail="Job result not ready")
+
+    files = job.result.get("files", [])
+    output_dir = job.result.get("output_dir", "")
+
+    return {
+        "job_id": job_id,
+        "output_dir": output_dir,
+        "files": files,
+        "file_count": len(files),
+    }
+
+
+@router.get("/orchestrate/jobs/{job_id}/files/{filename}")
+async def get_orch_file(job_id: str, filename: str) -> dict:
+    """读取指定文件的内容（用于前端预览）。"""
+    from src.server.orch_jobs import get_job_manager
+
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if not job.result:
+        raise HTTPException(status_code=404, detail="Job result not ready")
+
+    output_dir = job.result.get("output_dir", "")
+    if not output_dir:
+        raise HTTPException(status_code=404, detail="No output directory")
+
+    from pathlib import Path
+    filepath = Path(output_dir) / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+    try:
+        content = filepath.read_text(encoding="utf-8")
+        file_type = _detect_file_type(filename)
+        return {
+            "filename": filename,
+            "file_type": file_type,
+            "size": filepath.stat().st_size,
+            "content": content,
+            "previewable": file_type in ("code", "html", "markdown", "data"),
+        }
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=415, detail="Binary file, use download endpoint")
+
+
+@router.get("/orchestrate/jobs/{job_id}/download/{filename}")
+async def download_orch_file(job_id: str, filename: str) -> StreamingResponse:
+    """下载指定的产出文件。"""
+    from src.server.orch_jobs import get_job_manager
+
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    output_dir = job.result.get("output_dir", "") if job.result else ""
+    if not output_dir:
+        raise HTTPException(status_code=404, detail="No output directory")
+
+    from pathlib import Path
+    filepath = Path(output_dir) / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=str(filepath),
+        filename=filename,
+        media_type="application/octet-stream",
+    )
+
+
+@router.get("/orchestrate/jobs/{job_id}/download-all")
+async def download_all_orch_files(job_id: str) -> StreamingResponse:
+    """打包下载所有产出文件（.zip）。"""
+    from src.server.orch_jobs import get_job_manager
+    from src.utils.output_manager import get_output_manager
+
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    plan_id = ""
+    if job.result:
+        summary = job.result.get("summary", "")
+        import re
+        match = re.search(r"计划ID[:：]\s*([^\s\n]+)", summary)
+        if match:
+            plan_id = match.group(1)
+
+    if not plan_id:
+        raise HTTPException(status_code=404, detail="No plan_id found")
+
+    om = get_output_manager(plan_id)
+    archive_path = om.create_archive()
+
+    if not archive_path or not archive_path.exists():
+        raise HTTPException(status_code=500, detail="Failed to create archive")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=str(archive_path),
+        filename=f"{plan_id}.zip",
+        media_type="application/zip",
+    )
+
+
+@router.get("/orchestrate/outputs/{plan_id}")
+async def get_output_info(plan_id: str) -> dict:
+    """获取指定 plan 的输出目录信息。"""
+    from src.utils.output_manager import get_output_manager
+
+    om = get_output_manager(plan_id)
+    if not om.is_created:
+        raise HTTPException(status_code=404, detail="Output not found")
+
+    return om.get_output_info()
+
+
+@router.get("/orchestrate/outputs/{plan_id}/{filename}")
+async def get_output_file(plan_id: str, filename: str) -> dict:
+    """读取指定 plan 输出目录中的文件内容。"""
+    from src.utils.output_manager import get_output_manager
+
+    om = get_output_manager(plan_id)
+    if not om.is_created:
+        raise HTTPException(status_code=404, detail="Output not found")
+
+    content = om.read_file(filename)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+    file_type = _detect_file_type(filename)
+    return {
+        "filename": filename,
+        "file_type": file_type,
+        "content": content,
+        "previewable": file_type in ("code", "html", "markdown", "data"),
+    }
+
+
+def _detect_file_type(filename: str) -> str:
+    """根据扩展名检测文件类型。"""
+    from pathlib import Path
+    ext = Path(filename).suffix.lower()
+    type_map = {
+        ".py": "code", ".js": "code", ".ts": "code", ".jsx": "code",
+        ".tsx": "code", ".rs": "code", ".go": "code", ".java": "code",
+        ".cpp": "code", ".c": "code", ".h": "code", ".sh": "code",
+        ".bat": "code", ".html": "html", ".htm": "html", ".css": "html",
+        ".scss": "html", ".sass": "html",
+        ".md": "markdown", ".mdx": "markdown", ".txt": "markdown",
+        ".docx": "doc", ".json": "data", ".csv": "data",
+        ".yaml": "data", ".yml": "data", ".xml": "data", ".toml": "data",
+        ".pdf": "report",
+        ".png": "image", ".jpg": "image", ".jpeg": "image",
+        ".gif": "image", ".svg": "image", ".webp": "image",
+    }
+    return type_map.get(ext, "other")
