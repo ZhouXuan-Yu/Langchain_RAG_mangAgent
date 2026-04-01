@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import time
-import traceback
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
@@ -191,27 +190,6 @@ def _sync_orchestrate_wrapper(orchestrator, job) -> None:
                     "files":            event.get("files", []),
                     "summary_file":     event.get("summary_file"),
                 }
-                # B6: log final_result to debug file
-                try:
-                    import json as _json, datetime as _dt
-                    _LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "debug-d85885.log")
-                    _entry = {
-                        "sessionId": "d85885", "runId": "debug-run",
-                        "hypothesisId": "B6-files",
-                        "location": "orch_jobs.py:progress_callback",
-                        "message": "B6: final_result received",
-                        "data": {
-                            "output_dir": event.get("output_dir", ""),
-                            "nFiles": len(event.get("files") or []),
-                            "fileNames": [f.get("filename","?") for f in (event.get("files") or [])],
-                            "plan_id": event.get("plan_id", ""),
-                        },
-                        "timestamp": int(_dt.datetime.now().timestamp() * 1000),
-                    }
-                    with open(_LOG_PATH, "a", encoding="utf-8") as _f:
-                        _f.write(_json.dumps(_entry, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
             if job.status != JobStatus.RUNNING:
                 job.status = JobStatus.RUNNING
             await _sync_kanban("running", result=_format_progress(job.worker_state))
@@ -230,35 +208,15 @@ def _sync_orchestrate_wrapper(orchestrator, job) -> None:
         except _asyncio.CancelledError:
             job.set_cancelled()
         except Exception as e:
-            tb = traceback.format_exc()
             job.set_failed(str(e))
             job.add_event("error", {
                 "type": "error",
                 "message": f"[编排失败] {e}",
             })
-            # Write full traceback to debug log
-            _LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "debug-d85885.log")
-            try:
-                import json as _json
-                import datetime as _dt
-                entry = {
-                    "sessionId": "d85885",
-                    "runId": "debug-run",
-                    "hypothesisId": "B1-orchjobs",
-                    "location": "orch_jobs.py:_sync_orchestrate_wrapper",
-                    "message": "[编排失败] exception traceback",
-                    "data": {"error_type": type(e).__name__, "error": str(e), "traceback": tb},
-                    "timestamp": int(_dt.datetime.now().timestamp() * 1000),
-                }
-                with open(_LOG_PATH, "a", encoding="utf-8") as _f:
-                    _f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
 
     try:
         _asyncio.run(_async_inner())
     except Exception as _e:
-        import traceback as _tb
         logger.error("orch_jobs:_sync_orchestrate_wrapper exception: %s", _e)
         try:
             job.set_failed(str(_e))

@@ -3,30 +3,9 @@
 import asyncio
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Awaitable
-
-_LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "debug-d85885.log")
-
-def _dlog(session_id: str, run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    """Write one NDJSON line to the session debug log (synchronous, fire-and-forget)."""
-    import datetime as _dt
-    entry = {
-        "sessionId": session_id,
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(_dt.datetime.now().timestamp() * 1000),
-    }
-    try:
-        with open(_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+from typing import Callable, Awaitable
 
 from src.config import ENABLE_LANGSMITH, ENABLE_EPISODIC_MEMORY, ENABLE_HIERARCHICAL_ORCHESTRATION, DEFAULT_MODEL
 from src.utils.output_manager import get_output_manager
@@ -209,10 +188,6 @@ class CrayfishOrchestrator:
 
         # ── P2-D: 多级编排分支 ─────────────────────────────────────────────
         if ENABLE_HIERARCHICAL_ORCHESTRATION:
-            _dlog("d85885", "debug-run", "B1-orch",
-                  "orchestrator.py:orchestrate",
-                  "calling _orchestrate_recursive with initial_plan",
-                  {"n_tasks": len(plan_tasks), "task_ids": [t.get("task_id") for t in plan_tasks]})
             final_result = await self._orchestrate_recursive(
                 requirement=requirement,
                 enabled_agents=enabled_agents,
@@ -1069,11 +1044,6 @@ class CrayfishOrchestrator:
         else:
             plan = await self._create_plan(requirement, enabled_agents)
 
-        _dlog("d85885", "debug-run", "B1-plan",
-              "orchestrator.py:_orchestrate_recursive",
-              f"[L{depth}] plan created",
-              {"depth": depth, "n_tasks": len(plan), "task_ids": [t.get("task_id") for t in plan], "source": "initial_plan" if (depth == 0 and initial_plan is not None) else "create_plan"})
-
         await self._emit(progress_callback, {
             "type": "supervisor_plan",
             "depth": depth,
@@ -1126,11 +1096,6 @@ class CrayfishOrchestrator:
                 "task_description": f"[层级 {depth}] 并行执行 {len(ready)} 个任务: {ready}",
             })
 
-            _dlog("d85885", "debug-run", "B1a",
-                "orchestrator.py:ready-check",
-                f"[L{depth}] ready tasks before gather",
-                {"ready": ready, "task_map_keys": list(task_map.keys()), "completed": list(completed)})
-
             coroutines = []
             for tid in ready:
                 task = task_map[tid]
@@ -1163,25 +1128,11 @@ class CrayfishOrchestrator:
 
             batch_results = await asyncio.gather(*coroutines, return_exceptions=True)
 
-            _dlog("d85885", "debug-run", "B1b",
-                "orchestrator.py:after-gather",
-                f"[L{depth}] batch_results after gather",
-                {"ready": ready, "result_types": [type(r).__name__ for r in batch_results]})
-
             for idx, result in enumerate(batch_results):
                 if idx >= len(ready):
-                    _dlog("d85885", "debug-run", "B1-idx",
-                          "orchestrator.py:extra-result",
-                          f"[L{depth}] extra result at idx (ready/result mismatch)",
-                          {"idx": idx, "ready_len": len(ready), "result_type": type(result).__name__})
                     continue
                 tid = ready[idx]
                 if isinstance(result, Exception):
-                    _dlog("d85885", "debug-run", "B1c",
-                        "orchestrator.py:exception-caught",
-                        f"[L{depth}] task exception",
-                        {"tid": tid, "exc_type": type(result).__name__, "exc": str(result),
-                         "task_map_keys": list(task_map.keys()), "in_task_map": tid in task_map})
                     _agent = task_map[tid]["assigned_agent"] if tid in task_map else "unknown"
                     result = {
                         "task_id": tid,
@@ -1191,10 +1142,6 @@ class CrayfishOrchestrator:
                         "source": "error",
                     }
                 elif tid not in task_map:
-                    _dlog("d85885", "debug-run", "B1-unknown",
-                          "orchestrator.py:unknown-tid",
-                          f"[L{depth}] tid not in task_map",
-                          {"tid": tid})
                     continue
                 bus.store_result(tid, result)
                 all_results.append(result)

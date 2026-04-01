@@ -492,6 +492,22 @@ LangSmith 集成，实时追踪：
 ![首页仪表盘](Demophoto/5a5db5d343c9c2a06bb5eb4d7c3a42e9.png)
 系统概览、模型切换下拉框、快捷操作入口
 
+#### 任务编排 - 多步骤编排
+![任务编排](Demophoto/23255ce7d76ae1fa5cfaf57c6f1ebde6.png)
+可视化编排多步骤任务流程
+
+#### 编排页面 - 任务流程配置
+![编排页面](Demophoto/002d8f2fb11e6e269fbf100df3d4446a.png)
+可视化编排多步骤任务流程，支持卡片式节点配置
+
+#### 任务管理 - 任务创建与监控
+![任务管理](Demophoto/b04943b5014ada196faf0c82e886f8c7.png)
+创建、监控、终止任务，支持实时状态更新
+
+#### 会话历史 - 多会话管理
+![会话历史](Demophoto/d88f5d6e298354ce769ba3d1237de6b5.png)
+查看和管理历史对话记录，支持多会话并行
+
 #### 设置页面 - 多模型配置
 ![设置页面](Demophoto/040aa6d3f9a250f3bd896ae31d50d3d8.png)
 配置 DeepSeek、Claude、OpenAI、Gemini 等多模型 API Key
@@ -500,10 +516,6 @@ LangSmith 集成，实时追踪：
 ![工具配置](Demophoto/0429682c74214cdc080080c984aa2fd9.png)
 配置 Tavily 搜索、Playwright 浏览器、ChromaDB 记忆等工具
 
-#### 会话历史 - 多会话管理
-![会话历史](Demophoto/09f9c31c8cee1541f0d60478717911a9.png)
-查看和管理历史对话记录，支持多会话并行
-
 #### 记忆系统 - ChromaDB 向量存储
 ![记忆系统](Demophoto/919c4c977e37d37c7f29f11f23242344.png)
 ChromaDB 长期记忆存储，支持向量检索和语义相似度匹配
@@ -511,22 +523,6 @@ ChromaDB 长期记忆存储，支持向量检索和语义相似度匹配
 #### 记忆系统 - SQLite 状态持久化
 ![状态持久化](Demophoto/ff392f2a8f30afc7dfc9d35829067988.png)
 SQLite Checkpointer 支持断电恢复和会话回溯
-
-#### 任务管理 - 任务创建与监控
-![任务管理](Demophoto/b04943b5014ada196faf0c82e886f8c7.png)
-创建、监控、终止任务，支持实时状态更新
-
-#### 编排页面 - 任务流程配置
-![编排页面](Demophoto/002d8f2fb11e6e269fbf100df3d4446a.png)
-可视化编排多步骤任务流程，支持卡片式节点配置
-
-#### 会话历史 - 多会话管理
-![会话历史](Demophoto/d88f5d6e298354ce769ba3d1237de6b5.png)
-查看和管理历史对话记录，支持多会话并行
-
-#### 任务编排 - 多步骤编排
-![任务编排](Demophoto/23255ce7d76ae1fa5cfaf57c6f1ebde6.png)
-可视化编排多步骤任务流程
 
 #### 成本统计 - Token 使用追踪
 ![成本统计](Demophoto/c749c42d0eb356c1cf668315613b69a6.png)
@@ -665,7 +661,8 @@ del /f data\chroma_db\*.sqlite 2>nul /s
 | Phase 6 | ✅ 已完成 | 线程池架构 + 并发优化 + 前端编排增强 |
 | Phase 7 | ✅ 已完成 | 自愈机制增强 + 错误恢复 |
 | Phase 8 | ✅ 已完成 | 长期记忆（Episodic Memory）+ 可观测性 + Token 追踪 |
-| Phase 9 | 🚧 进行中 | 线程池隔离 + 异步任务执行 + 前端增强 |
+| Phase 9 | ✅ 已完成 | 代码清理 + MCP 协议集成框架 |
+| Phase 10 | 🚧 进行中 | 前端增强 + 性能优化 |
 
 ### Phase 5 更新内容（2026-04-01）
 
@@ -787,7 +784,7 @@ del /f data\chroma_db\*.sqlite 2>nul /s
 
 **代码位置**：`src/graph/orchestrator.py`、`src/graph/prompt.py`
 
-### Phase 9 更新内容（2026-04-08）
+### Phase 10 更新内容（2026-04-08）
 
 本次更新实现了三大核心功能：线程池隔离、跨会话长期记忆（Episodic Memory）、以及异步任务执行架构。
 
@@ -860,7 +857,39 @@ CREATE TABLE agent_episodes (
 );
 ```
 
-### Phase 8 待实施
+### Phase 9 更新内容（2026-04-08）
+
+本次更新完成了代码清理和 MCP 协议集成的初始框架。
+
+#### 1. 代码清理 ✅
+
+**移除内容**：
+- 调试日志代码（`_dlog` 函数调用）
+- `src/utils/debug_ndjson.py` 文件（已从 git 中删除）
+- 散布在各模块中的临时调试日志
+
+**涉及文件**：
+- `src/graph/orchestrator.py` — 移除多层级递归调试日志
+- `src/server/orch_jobs.py` — 移除错误追踪日志
+
+#### 2. MCP 协议集成框架 ✅
+
+**新增目录**：`src/mcp/`
+
+**核心文件**：
+- `__init__.py` — MCP 模块初始化
+- `server.py` — MCP Server 实现，支持 SSE 传输协议
+- `registry.py` — 工具注册中心，管理工具元数据
+- `tools.py` — 内置工具定义
+
+**功能说明**：
+- 工具动态发现：`GET /mcp/tools` 返回可用工具列表
+- 工具按需绑定：根据 task capability 动态加载工具集
+- 跨框架互操作：其他 MCP 客户端可直接调用 Crayfish 工具
+
+**代码位置**：`src/mcp/`
+
+### Phase 10 远期规划
 
 | 模块 | 说明 |
 |------|------|
