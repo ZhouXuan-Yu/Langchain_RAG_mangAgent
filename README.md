@@ -137,7 +137,7 @@ playwright install chromium --with-deps
 2. 注册 / 登录账号
 3. 进入 **API Keys** 页面
 4. 点击 **Create API Key**，复制生成的密钥
-5. 格式类似：`sk-e2bc13304a6249cf956a369a21c18b2c`
+5. 格式类似：`sk-e2bc13304a6249cf956a36`
 
 > 注意：DeepSeek API Key 是必须的，系统启动时会检查。若暂不配置其他模型，先只填这一项即可使用。
 
@@ -657,4 +657,4 @@ del /f data\chroma_db\*.sqlite 2>nul /s
 
 ---
 
-*文档最后更新：2026-03-28*
+*文档最后更新：2026-03-31*
