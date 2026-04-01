@@ -653,8 +653,56 @@ del /f data\chroma_db\*.sqlite 2>nul /s
 | Phase 2 | ✅ 已完成 | ChromaDB 记忆 + SQLite 持久化 + 上下文裁剪 |
 | Phase 3 | ✅ 已完成 | 高级 LangGraph 编排 + 多模态 + LangSmith 监控 |
 | Phase 4 | ✅ 已完成 | 多智能体系统 + Web UI + 任务编排 |
-| Phase 5 | 🚧 进行中 | 性能优化 + 错误恢复增强 |
+| Phase 5 | ✅ 已完成 | 多 Agent 系统优化（消息总线 + DAG 依赖 + 能力路由） |
+| Phase 6 | 🚧 进行中 | 长期记忆 + 多级编排 + 可观测性 |
+
+### Phase 5 更新内容（2026-04-01）
+
+本次更新实现了多 Agent 系统的三大核心优化：
+
+#### 1. AgentMessageBus 消息总线 ✅
+
+**功能说明**：构建声明式消息传递层，支持 Agent 间结构化通信。
+
+**核心能力**：
+- `store_result / get_context / mark_done` — 结果存储与上下文注入
+- `add_dependency / _has_cycle` — 依赖管理与循环检测
+- DAG 拓扑排序执行 — 按依赖关系智能调度任务
+
+**代码位置**：`src/multi_agent/orchestrator.py`
+
+#### 2. DAG 任务规划 ✅
+
+**功能说明**：支持有向无环图依赖声明，实现复杂的任务执行顺序。
+
+**核心能力**：
+- `depends_on` — 声明任务依赖关系
+- `execution_mode` — 指定并行/顺序执行模式
+- 环形依赖自动检测与报错
+- 拓扑排序调度引擎
+
+**代码位置**：`src/graph/orchestrator.py`、`src/graph/prompt.py`
+
+#### 3. Capability-Based Routing ✅
+
+**功能说明**：基于能力声明的智能路由，替代硬编码的 worker_kind 匹配。
+
+**核心能力**：
+- `capabilities` 字段 — Agent 声明自身能力标签
+- Supervisor 能力匹配 — 根据任务需求匹配最合适的 Agent
+- capability overlap 算法 — 最优/次优匹配策略
+
+**代码位置**：`src/server/dependencies.py`、`src/graph/prompt.py`
+
+### Phase 6 待实施
+
+| 模块 | 说明 |
+|------|------|
+| 长期记忆（Episodic Memory） | 跨会话状态共享，L3 事件序 + L4 向量检索 |
+| 多级编排（递归 Supervisor） | 总任务 → 子任务 → 孙任务，最多 3 层 |
+| 可观测性（LangSmith） | 分布式追踪 + Token 成本追踪 |
+| MCP 协议集成 | 工具动态发现与按需绑定 |
 
 ---
 
-*文档最后更新：2026-03-31*
+*文档最后更新：2026-04-01*

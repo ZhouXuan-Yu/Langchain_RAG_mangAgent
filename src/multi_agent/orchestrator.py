@@ -11,14 +11,6 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-import logging
-import sqlite3
-import threading
-import uuid
-from contextlib import contextmanager
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Optional
 
 from src.config import CHECKPOINT_PATH, DEFAULT_MODEL
 
@@ -85,6 +77,8 @@ def _init_db():
         cols = [r[1] for r in c.execute("PRAGMA table_info(agent_profiles)").fetchall()]
         if "worker_kind" not in cols:
             c.execute("ALTER TABLE agent_profiles ADD COLUMN worker_kind TEXT")
+        if "capabilities" not in cols:
+            c.execute("ALTER TABLE agent_profiles ADD COLUMN capabilities TEXT DEFAULT '[]'")
 
         row = c.execute("SELECT COUNT(*) as cnt FROM agent_profiles").fetchone()
         if row["cnt"] == 0:
@@ -112,6 +106,7 @@ def _seed_workers(c: sqlite3.Cursor) -> None:
             "外网实时信息搜索，使用 Tavily 搜索工具获取最新资料",
             DEFAULT_MODEL,
             "#4ade80",
+            '["web_search", "browse_page"]',
         ),
         (
             "agent_worker_rag",
@@ -120,6 +115,7 @@ def _seed_workers(c: sqlite3.Cursor) -> None:
             "本地知识库与记忆检索，从向量数据库中检索相关上下文",
             DEFAULT_MODEL,
             "#60a5fa",
+            '["memory_search", "knowledge_base_search"]',
         ),
         (
             "agent_worker_coder",
@@ -128,19 +124,19 @@ def _seed_workers(c: sqlite3.Cursor) -> None:
             "代码生成与编写，基于上下文生成高质量代码实现",
             DEFAULT_MODEL,
             "#facc15",
+            '["code_generation", "code_review"]',
         ),
     ]
-    for (wk_id, wk_name, wk_kind, wk_desc, wk_model, wk_color) in workers:
+    for (wk_id, wk_name, wk_kind, wk_desc, wk_model, wk_color, wk_caps) in workers:
         existing = c.execute(
             "SELECT id FROM agent_profiles WHERE id=?", (wk_id,)
         ).fetchone()
         if not existing:
             c.execute(
                 "INSERT INTO agent_profiles "
-                "(id,name,role,description,model,color,is_active,parent_id,worker_kind,created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (wk_id, wk_name, wk_kind, wk_desc, wk_model, wk_color,
-                 1, "agent_main", wk_kind, now),
+                "(id,name,role,worker_kind,description,model,color,is_active,capabilities,created_at) "
+                "VALUES (?,?,?,?,?,?,?,1,?,?)",
+                (wk_id, wk_name, wk_kind, wk_kind, wk_desc, wk_model, wk_color, wk_caps, now),
             )
 
 
@@ -201,6 +197,7 @@ class AgentRegistry:
         model: str = DEFAULT_MODEL,
         color: Optional[str] = None,
         parent_id: Optional[str] = None,
+        capabilities: list[str] | None = None,
     ) -> dict:
         """注册一个新 Agent."""
         agent_id = _uuid()
@@ -210,11 +207,12 @@ class AgentRegistry:
             color = AGENT_COLORS[self._color_idx % len(AGENT_COLORS)]
             self._color_idx += 1
 
+        cap_json = json.dumps(capabilities or []) if capabilities is not None else "[]"
         with _conn() as c:
             c.execute(
-                "INSERT INTO agent_profiles (id,name,role,description,model,color,parent_id,created_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (agent_id, name, role, description, model, color, parent_id, now),
+                "INSERT INTO agent_profiles (id,name,role,description,model,color,parent_id,capabilities,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (agent_id, name, role, description, model, color, parent_id, cap_json, now),
             )
 
         logger.info(f"[agent_registry] created agent {agent_id}: {name} ({role})")
@@ -230,6 +228,7 @@ class AgentRegistry:
         color: Optional[str] = None,
         is_active: Optional[bool] = None,
         worker_kind: Optional[str] = None,
+        capabilities: list[str] | None = None,
     ) -> Optional[dict]:
         """更新 Agent 配置."""
         updates: list[str] = []
@@ -248,6 +247,8 @@ class AgentRegistry:
             updates.append("is_active=?"); params.append(1 if is_active else 0)
         if worker_kind is not None:
             updates.append("worker_kind=?"); params.append(worker_kind)
+        if capabilities is not None:
+            updates.append("capabilities=?"); params.append(json.dumps(capabilities))
 
         if not updates:
             return self.get(agent_id)
@@ -334,9 +335,13 @@ class AgentRegistry:
         agent_id: str,
         task_description: str,
         thread_id: Optional[str] = None,
+        context: list[dict] | None = None,
     ) -> dict:
         """
         分发任务给指定 Agent，执行并返回结果。
+
+        Args:
+            context: 前置任务的执行结果列表，注入到 prompt 中供 Agent 参考。
         """
         agent = self.get_or_create_instance(agent_id)
         if not agent:
@@ -348,11 +353,28 @@ class AgentRegistry:
         thread = thread_id or f"agent_{agent_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         config = {"configurable": {"thread_id": thread}}
 
+        # 构建带 context 的消息
+        if context:
+            ctx_lines = [f"【上下文（来自前置任务）】:"]
+            for ci, cr in enumerate(context, 1):
+                src = cr.get("agent", "unknown")
+                res = cr.get("result", "")
+                score = cr.get("quality_score", 0.0)
+                ctx_lines.append(f"[{ci}] 来源: {src} (质量: {score:.1f})")
+                ctx_lines.append(f"    {str(res)[:300]}...")
+            ctx_block = "\n".join(ctx_lines)
+            prompt_with_ctx = (
+                f"{ctx_block}\n\n"
+                f"【本次任务】:\n{task_description}"
+            )
+        else:
+            prompt_with_ctx = task_description
+
         accumulated = ""
 
         try:
             async for event in agent.astream_events(
-                {"messages": [HumanMessage(content=task_description)], "thread_id": thread},
+                {"messages": [HumanMessage(content=prompt_with_ctx)], "thread_id": thread},
                 config=config,
                 version="v2",
             ):
@@ -401,6 +423,7 @@ class AgentRegistry:
             "parent_id": row["parent_id"],
             "worker_kind": row["worker_kind"],
             "created_at": row["created_at"],
+            "capabilities": json.loads(row["capabilities"] or "[]"),
         }
 
 

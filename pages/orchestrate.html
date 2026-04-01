@@ -663,6 +663,23 @@ function buildStepList(enabledAgents, job) {
   if (_orchHasWorkerKind(enabledAgents, parts, 'search_worker')) addTmpl('search_worker');
   if (_orchHasWorkerKind(enabledAgents, parts, 'rag_worker')) addTmpl('rag_worker');
   if (_orchHasWorkerKind(enabledAgents, parts, 'coder')) addTmpl('coder');
+
+  // 动态渲染自定义 agent（"杂曹"槽位）：id = worker_kind，同时存储 agentId 供事件路由
+  var seenKinds = new Set(['search_worker', 'rag_worker', 'coder']);
+  parts.forEach(function(p) {
+    var wk = p.worker_kind;
+    if (!wk || seenKinds.has(wk)) return;
+    seenKinds.add(wk);
+    _steps.push({
+      id: wk,
+      lane: '六部 · 杂曹',
+      name: p.name || wk,
+      desc: p.description || ('执行 ' + wk + ' 任务'),
+      status: 'pending',
+      agentId: p.id,
+    });
+  });
+
   addTmpl('quality_eval');
   addTmpl('self_heal');
   addTmpl('final_result');
@@ -929,26 +946,26 @@ function onWorkerStart(d) {
   if (_orchHasStepId('phase_shangshu') && agentRaw !== 'supervisor') {
     updateStepStatus('phase_shangshu', 'done');
   }
-  var key = normKey(agentRaw);
+  var key = _resolveStepKey(agentRaw);
   if (key !== 'system' && key !== 'supervisor') updateStepStatus(key, 'active');
   appendLog(key === 'system' ? 'system' : key, '\u5f00\u59cb\u6267\u884c: ' + (d.task_description || d.description || ''));
 }
 
 function onWorkerProgress(d) {
-  var key = normKey(d.agent);
+  var key = _resolveStepKey(d.agent);
   appendLog(key, d.message || '\u8fdb\u884c\u4e2d...');
 }
 
 function onWorkerDone(d) {
-  var key = normKey(d.agent);
+  var key = _resolveStepKey(d.agent);
   var score = parseFloat(d.quality_score || 0);
-  updateStepStatus(key, 'done');
+  if (key !== 'system') updateStepStatus(key, 'done');
   appendLog(key, '\u5b8c\u6210 (\u8d28\u91cf: ' + score.toFixed(1) + '/10)');
 }
 
 function onWorkerRejected(d) {
-  var key = normKey(d.agent);
-  updateStepStatus(key, 'fail');
+  var key = _resolveStepKey(d.agent);
+  if (key !== 'system') updateStepStatus(key, 'fail');
   appendLog(key, '\u88ab\u9a73\u56de: ' + (d.reason || '\u672a\u77e5\u539f\u56e0'));
 }
 
@@ -1076,6 +1093,21 @@ function cancelSelectedJob() {
       onJobDone('cancelled');
     })
     .catch(function(err) { toast('\u53d6\u6d88\u5931\u8d25: ' + err.message, 'error'); });
+}
+
+function _findStepByAgentId(agentId) {
+  for (var i = 0; i < _steps.length; i++) {
+    if (_steps[i].agentId === agentId) return _steps[i];
+  }
+  return null;
+}
+
+function _resolveStepKey(agentRaw) {
+  var key = normKey(agentRaw);
+  if (key !== 'system') return key;
+  // 自定义 agent：尝试用 agentId 匹配步骤
+  var step = _findStepByAgentId(agentRaw);
+  return step ? step.id : 'system';
 }
 
 function normKey(agent) {

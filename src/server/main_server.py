@@ -115,7 +115,12 @@ async def _cleanup_resources_async():
     if pending:
         for t in pending:
             t.cancel()
-        await asyncio.wait(pending, timeout=3.0)
+        try:
+            await asyncio.wait(pending, timeout=3.0)
+        except asyncio.exceptions.CancelledError:
+            # uvicorn may cancel the cleanup task itself — suppress so sync
+            # _cleanup_resources() still runs and the shutdown chain completes.
+            return
 
 
 atexit.register(_cleanup_resources)
@@ -127,7 +132,11 @@ async def lifespan(app: FastAPI):
     logger.info("[lifespan] server starting...")
     yield
     logger.info("[lifespan] server shutting down...")
-    await _cleanup_resources_async()
+    import asyncio as _asyncio
+    try:
+        await _cleanup_resources_async()
+    except _asyncio.exceptions.CancelledError:
+        pass  # fall through to sync cleanup
     _cleanup_resources()
 
 

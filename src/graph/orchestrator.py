@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Awaitable
 
+from src.utils.output_manager import get_output_manager
+
 logger = logging.getLogger(__name__)
 
 # ── 最大循环次数（防止死亡循环）────────────────────────────────────────────
@@ -19,15 +21,87 @@ TASK_STATUS_COMPLETED = "completed"
 TASK_STATUS_REJECTED = "rejected"
 
 
-class TaskItem(dict):
-    """单个任务项。继承 dict 但提供类型安全的构造器。"""
+class AgentMessageBus:
+    """
+    Agent 间结构化消息总线 — 负责结果共享与依赖注入。
 
-    def __init__(self, task_id: str, description: str, assigned_agent: str, worker_kind: str | None = None):
+    工作方式：
+    1. Worker 执行完毕后调用 bus.store_result(task_id, result)
+    2. 下游 Worker 执行前调用 bus.get_context(task_id) 注入前置结果
+    3. 环形依赖检测：每次 add_dependency 时检测是否存在环
+    """
+    _instance: "AgentMessageBus | None" = None
+
+    def __init__(self):
+        self._results: dict[str, dict] = {}
+        self._in_degree: dict[str, int] = {}
+        self._dependents: dict[str, list[str]] = {}
+
+    @classmethod
+    def get_instance(cls) -> "AgentMessageBus":
+        if cls._instance is None:
+            cls._instance = AgentMessageBus()
+        return cls._instance
+
+    @classmethod
+    def reset(cls) -> None:
+        if cls._instance:
+            cls._instance._results.clear()
+            cls._instance._in_degree.clear()
+            cls._instance._dependents.clear()
+
+    def add_dependency(self, from_task_id: str, to_task_id: str) -> None:
+        self._dependents.setdefault(from_task_id, []).append(to_task_id)
+        self._in_degree[to_task_id] = self._in_degree.get(to_task_id, 0) + 1
+        if self._has_cycle(from_task_id, to_task_id):
+            raise ValueError(f"环形依赖检测：{from_task_id} -> {to_task_id} 形成环")
+
+    def _has_cycle(self, from_id: str, to_id: str) -> bool:
+        visited: set[str] = set()
+
+        def dfs(node: str) -> bool:
+            if node == from_id:
+                return True
+            if node in visited:
+                return False
+            visited.add(node)
+            for dep in self._dependents.get(node, []):
+                if dfs(dep):
+                    return True
+            return False
+
+        return dfs(to_id)
+
+    def store_result(self, task_id: str, result: dict) -> None:
+        self._results[task_id] = result
+
+    def get_context(self, task_id: str) -> list[dict]:
+        return [v for k, v in self._results.items() if k != task_id]
+
+    def mark_done(self, task_id: str) -> None:
+        for dep_task_id in self._dependents.get(task_id, []):
+            self._in_degree[dep_task_id] = max(0, self._in_degree.get(dep_task_id, 1) - 1)
+
+
+class TaskItem(dict):
+    """单个任务项。继承 dict，支持 DAG 依赖和执行模式。"""
+
+    def __init__(
+        self,
+        task_id: str,
+        description: str,
+        assigned_agent: str,
+        worker_kind: str | None = None,
+        depends_on: list[str] | None = None,
+        execution_mode: str = "parallel",
+    ):
         dict.__init__(self, {
             "task_id": task_id,
             "description": description,
             "assigned_agent": assigned_agent,
             "worker_kind": worker_kind,
+            "depends_on": depends_on or [],       # 前置任务 ID 列表
+            "execution_mode": execution_mode,       # parallel | sequential
             "status": TASK_STATUS_PENDING,
             "result": None,
             "quality_score": 0.0,
@@ -75,6 +149,10 @@ class CrayfishOrchestrator:
         self.plan_id = f"plan_{uuid.uuid4().hex[:8]}"
         self._participants = {p["id"]: p for p in (participants or [])}
 
+        # ── 创建输出管理器 ──────────────────────────────────────────────────
+        output_mgr = get_output_manager(self.plan_id)
+        output_mgr.ensure_dir()
+
         # ── Step 1: Supervisor Planning ────────────────────────────────────────
         await self._emit(progress_callback, {
             "type": "worker_progress",
@@ -92,49 +170,63 @@ class CrayfishOrchestrator:
             },
         })
 
-        # ── Step 2: 执行任务 ────────────────────────────────────────────────
-        all_results = []
+        # ── Step 2: DAG 拓扑排序执行 ──────────────────────────────────────────
+        bus = AgentMessageBus.get_instance()
+        bus.reset()
 
-        # 按 worker_kind 分组：内置并行的（search_worker / rag_worker）vs 顺序的（coder）
-        # 通用 Agent（worker_kind 为空/null）走并行（dispatch_task）
-        builtin_parallel = {"search_worker", "rag_worker"}
-        sequential = {"coder"}
+        task_map: dict[str, TaskItem] = {t["task_id"]: t for t in plan_tasks}
 
-        parallel_tasks = [
-            t for t in plan_tasks
-            if (t.get("worker_kind") or "") in builtin_parallel
-        ]
-        coder_tasks = [t for t in plan_tasks if (t.get("worker_kind") or "") in sequential]
-        # 通用 Agent（没有 worker_kind 或 worker_kind 不属于内置）
-        generic_tasks = [
-            t for t in plan_tasks
-            if (t.get("worker_kind") or "") not in builtin_parallel
-            and (t.get("worker_kind") or "") not in sequential
-        ]
+        # 构建 DAG：注册所有 depends_on 依赖
+        for t in plan_tasks:
+            for dep in t.get("depends_on") or []:
+                if dep in task_map:
+                    bus.add_dependency(dep, t["task_id"])
 
-        # 并行执行 search + rag + 通用 Agent
-        if parallel_tasks or generic_tasks:
-            to_run = parallel_tasks + generic_tasks
+        all_results: list[dict] = []
+        completed: set[str] = set()
+
+        while len(completed) < len(task_map):
+            ready = [
+                tid for tid, deg in bus._in_degree.items()
+                if tid not in completed and deg == 0
+            ]
+            # 无依赖的任务（入度从未被加过）也在第一轮执行
+            if not ready:
+                ready = [tid for tid in task_map if tid not in completed]
+
+            if not ready:
+                logger.warning("[orchestrator] DAG deadlock, breaking")
+                break
+
             await self._emit(progress_callback, {
                 "type": "worker_start",
                 "agent": "supervisor",
-                "task_id": "parallel_dispatch",
-                "task_description": f"并行执行 {len(to_run)} 个任务",
+                "task_id": "parallel_batch",
+                "task_description": f"并行执行 {len(ready)} 个任务: {ready}",
             })
-            coroutines = [self._execute_single_task(t, progress_callback) for t in to_run]
-            parallel_results = await asyncio.gather(*coroutines, return_exceptions=True)
-            for result in parallel_results:
-                if isinstance(result, Exception):
-                    logger.error(f"[orchestrator] parallel task failed: {result}")
-                else:
-                    all_results.append(result)
 
-        # 顺序执行 coder（依赖前两个任务的结果）
-        for coder_task in coder_tasks:
-            context = all_results if all_results else None
-            result = await self._execute_coder_task(coder_task, context, progress_callback)
-            if not isinstance(result, Exception):
+            coroutines = [
+                self._execute_single_task(task_map[tid], bus.get_context(tid), progress_callback, output_mgr)
+                for tid in ready
+            ]
+            batch_results = await asyncio.gather(*coroutines, return_exceptions=True)
+
+            for tid, result in zip(ready, batch_results):
+                if isinstance(result, Exception):
+                    logger.error(f"[orchestrator] task {tid} failed: {result}")
+                    result = {
+                        "task_id": tid,
+                        "agent": task_map[tid]["assigned_agent"],
+                        "result": f"[执行失败] {str(result)}",
+                        "confidence": 0.0,
+                        "quality_score": 0.0,
+                        "source": "error",
+                        "raw_data": str(result),
+                    }
+                bus.store_result(tid, result)
                 all_results.append(result)
+                completed.add(tid)
+                bus.mark_done(tid)
 
         # ── Step 3: 循环计数检查 ────────────────────────────────────────────
         self.loop_count += 1
@@ -150,7 +242,7 @@ class CrayfishOrchestrator:
                 "type": "error",
                 "message": f"达到最大循环次数 ({MAX_LOOP_COUNT})，强制终止",
             })
-            return self._build_final_result(all_results, quality_threshold, False)
+            return self._build_final_result(all_results, quality_threshold, False, output_mgr=output_mgr, requirement=requirement)
 
         # ── Step 4: 质量评估 ────────────────────────────────────────────────
         overall_quality = self._evaluate_overall_quality(all_results)
@@ -207,7 +299,7 @@ class CrayfishOrchestrator:
         passed = overall_quality >= quality_threshold
 
         # 构建汇总报告
-        final_result = self._build_final_result(all_results, overall_quality, passed)
+        final_result = self._build_final_result(all_results, overall_quality, passed, output_mgr=output_mgr, requirement=requirement)
 
         await self._emit(progress_callback, {
             "type": "final_result",
@@ -273,7 +365,7 @@ class CrayfishOrchestrator:
                 else:
                     enabled_kinds.add(a)  # 直接当 worker_kind 用
 
-        # 构建动态可用 Agent 描述段落（不含 agent_main，避免被指派执行子任务）
+        # 构建动态可用 Agent 描述段落（含 capabilities，供 Supervisor 路由匹配）
         agent_lines = []
         for pid, p in _all_participants.items():
             if pid == "agent_main":
@@ -287,14 +379,15 @@ class CrayfishOrchestrator:
                  "rag_worker": "本地知识库与记忆检索",
                  "coder": "代码生成与编写"}.get(wk, "")
             )
-            # assigned_agent 填 agent_id（稳定）
-            agent_lines.append(f"- {pid}: {desc}")
+            caps = p.get("capabilities") or []
+            caps_str = (", ".join(caps)) if caps else "无"
+            agent_lines.append(f"- {pid}: {desc} [能力: {caps_str}]")
 
         if not agent_lines:
             agent_lines = [
-                "- agent_worker_search: 外网搜索 (Tavily)",
-                "- agent_worker_rag: 本地知识库检索",
-                "- agent_worker_coder: 代码生成",
+                "- agent_worker_search: 外网搜索 (Tavily) [能力: web_search, browse_page]",
+                "- agent_worker_rag: 本地知识库检索 [能力: memory_search, knowledge_base_search]",
+                "- agent_worker_coder: 代码生成 [能力: code_generation, code_review]",
             ]
             enabled_kinds = {"search_worker", "rag_worker", "coder"}
 
@@ -303,44 +396,25 @@ class CrayfishOrchestrator:
         if "agent_main" in _all_participants:
             cp = _all_participants["agent_main"]
             chief_note = (
-                f"\n\n总协调者: agent_main（{cp.get('name', 'Chief Coordinator')}）— "
+                f"总协调者: agent_main（{cp.get('name', 'Chief Coordinator')}）— "
                 "由系统指定为最高管理者；**禁止**在 JSON 的 assigned_agent 中使用 agent_main。"
                 "子任务仅能分配给下列执行型 Agent id。"
             )
 
-        prompt = f"""你是一个任务规划专家（Supervisor）。请分析用户需求，将其拆解为最多 3 个可执行的子任务。
+        from src.graph.prompt import build_supervisor_prompt
 
-用户需求:
-{requirement}
-
-可用的 Agent（必须严格使用下面的 agent id 作为 assigned_agent）:
-{agents_desc}{chief_note}
-
-拆分原则（最小完备原则）:
-1. 只拆分确实需要的子任务，不要过度拆分
-2. 互不干扰的任务（如搜索和记忆检索）可以并行
-3. 代码生成任务依赖搜索/记忆结果，应放在最后
-4. 每个任务描述要清晰、具体
-
-请输出 JSON 格式的 Plan:
-{{
-  "plan_id": "plan_xxx",
-  "tasks": [
-    {{
-      "task_id": "task_1",
-      "description": "具体任务描述",
-      "assigned_agent": "上面列表中的 agent id"
-    }}
-  ]
-}}
-
-只输出 JSON，不要其他内容。"""
+        supervisor_prompt = build_supervisor_prompt(
+            requirement=requirement,
+            agents_desc=agents_desc,
+            chief_note=chief_note,
+            max_tasks=5,
+        )
 
         try:
             llm = init_deepseek_llm(temperature=0.3, streaming=False)
             response = await llm.ainvoke([
-                SystemMessage(content="你是一个专业的任务规划专家，擅长将复杂需求拆解为可执行的子任务。"),
-                HumanMessage(content=prompt),
+                SystemMessage(content="你是一个专业的任务规划专家，擅长将复杂需求拆解为可执行的子任务。你也是 Crayfish 系统的首席协调官，只负责规划，禁止执行子任务。"),
+                HumanMessage(content=supervisor_prompt),
             ])
 
             content = response.content if hasattr(response, "content") else str(response)
@@ -351,41 +425,60 @@ class CrayfishOrchestrator:
                 data = json.loads(json_str)
                 tasks = data.get("tasks", [])
                 result = []
-                for t in tasks[:3]:
+                builtin_kinds = {"search_worker", "rag_worker", "coder"}
+                for t in tasks:
                     task_id = t.get("task_id", f"task_{uuid.uuid4().hex[:6]}")
                     agent_id = t.get("assigned_agent", "")
                     wk = None
-                    # 归一化 assigned_agent：简写优先映射
                     norm_id = _short_map.get(agent_id, agent_id)
-                    # 查找 worker_kind
                     p = _all_participants.get(agent_id) or _all_participants.get(norm_id)
                     if p:
                         wk = p.get("worker_kind")
                     else:
-                        # unknown id，尝试用简写映射
                         wk = _short_map.get(agent_id)
                         if wk:
                             norm_id = wk
                         p = _all_participants.get(wk) if wk else None
-                    # 校验
+                    builtin_kinds = {"search_worker", "rag_worker", "coder"}
                     if wk and wk not in enabled_kinds:
-                        logger.warning(f"[orchestrator] plan assigned unknown agent {agent_id} ({wk}), skipping")
-                        continue
-                    result.append(TaskItem(task_id, t.get("description", ""), norm_id, wk))
+                        if wk in builtin_kinds:
+                            logger.warning(f"[orchestrator] plan assigned unknown builtin {agent_id} ({wk}), skipping")
+                            continue
+                    depends_on = t.get("depends_on") or []
+                    execution_mode = t.get("execution_mode") or "parallel"
+                    result.append(TaskItem(
+                        task_id,
+                        t.get("description", ""),
+                        norm_id,
+                        wk,
+                        depends_on=depends_on,
+                        execution_mode=execution_mode,
+                    ))
                 logger.info(f"[orchestrator] plan created: {len(result)} tasks")
                 return result
 
         except Exception as e:
             logger.error(f"[orchestrator] plan creation failed: {e}")
 
-        # 回退：基于关键词自动拆解
-        return self._fallback_plan(requirement, enabled_kinds)
+        # 回退：基于关键词自动拆解（感知所有已注册 agent）
+        return self._fallback_plan(requirement, enabled_kinds, self._participants)
 
-    def _fallback_plan(self, requirement: str, enabled_kinds: set[str]) -> list[TaskItem]:
-        """回退计划：基于关键词自动拆解。"""
+    def _fallback_plan(
+        self,
+        requirement: str,
+        enabled_kinds: set[str],
+        all_participants: dict[str, dict] | None = None,
+    ) -> list[TaskItem]:
+        """
+        回退计划：基于关键词自动拆解。
+
+        动态感知所有已注册的 agent（包含自定义），不再局限于内置 3 个。
+        优先匹配内置 agent（search/rag/coder），其余落入 generic_tasks。
+        """
         tasks = []
         req_lower = requirement.lower()
 
+        # 内置关键词匹配
         if "search_worker" in enabled_kinds:
             search_keywords = ["search", "搜索", "查找", "调研", "latest", "2025", "2026", "bug", "版本", "用法", "如何"]
             if any(k in req_lower for k in search_keywords):
@@ -416,28 +509,49 @@ class CrayfishOrchestrator:
                     "coder",
                 ))
 
+        # 若无匹配，遍历所有已注册的自定义 agent（排除 agent_main 和内置）
         if not tasks and enabled_kinds:
-            first_kind = next(iter(enabled_kinds))
-            kind_to_id = {
-                "search_worker": "agent_worker_search",
-                "rag_worker": "agent_worker_rag",
-                "coder": "agent_worker_coder",
-            }
-            tasks.append(TaskItem(
-                f"task_{uuid.uuid4().hex[:6]}",
-                requirement,
-                kind_to_id.get(first_kind, first_kind),
-                first_kind,
-            ))
+            builtin_kinds = {"search_worker", "rag_worker", "coder"}
+            participants = all_participants or {}
+
+            for pid, p in participants.items():
+                if pid == "agent_main":
+                    continue
+                wk = p.get("worker_kind")
+                if wk and wk in enabled_kinds and wk not in builtin_kinds:
+                    tasks.append(TaskItem(
+                        f"task_{uuid.uuid4().hex[:6]}",
+                        requirement,
+                        pid,
+                        wk,
+                    ))
+                    break  # 选第一个匹配的自定义 agent
+
+            # 再兜底：选 enabled_kinds 中的第一个
+            if not tasks:
+                first_kind = next((k for k in enabled_kinds if k in builtin_kinds), next(iter(enabled_kinds), None))
+                if first_kind:
+                    kind_to_id = {
+                        "search_worker": "agent_worker_search",
+                        "rag_worker": "agent_worker_rag",
+                        "coder": "agent_worker_coder",
+                    }
+                    tasks.append(TaskItem(
+                        f"task_{uuid.uuid4().hex[:6]}",
+                        requirement,
+                        kind_to_id.get(first_kind, first_kind),
+                        first_kind,
+                    ))
 
         return tasks
 
     async def _execute_single_task(
         self,
         task: TaskItem,
+        context: list[dict] | None = None,
         progress_callback: Callable[[dict], Awaitable[None]] | None = None,
     ) -> dict:
-        """执行单个 Worker 任务。路由依据 worker_kind 字段。"""
+        """执行单个 Worker 任务。路由依据 worker_kind 字段，支持 context 注入。"""
         from src.graph.workers import SearchWorker, RAGWorker, CoderWorker
 
         task_id = task["task_id"]
@@ -460,10 +574,9 @@ class CrayfishOrchestrator:
                 result = await worker.execute(task, progress_callback)
             elif wk == "coder":
                 worker = CoderWorker()
-                result = await worker.execute(task, None, progress_callback)
+                result = await worker.execute(task, context, progress_callback)
             else:
-                # 通用 Agent（无 worker_kind）：走 AgentRegistry.dispatch_task
-                result = await self._dispatch_generic(agent_id, task["description"], task_id)
+                result = await self._execute_generic_task(task, context, progress_callback)
 
             await self._emit(progress_callback, {
                 "type": "worker_done",
@@ -541,6 +654,119 @@ class CrayfishOrchestrator:
                 "source": "dispatch_error",
                 "raw_data": str(e),
             }
+
+    async def _execute_generic_task(
+        self,
+        task: TaskItem,
+        context: list[dict] | None = None,
+        progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+    ) -> dict:
+        """
+        通用 Agent 执行器 — 处理所有非内置 worker_kind。
+
+        替代原 _dispatch_generic()，新增：
+        - 实时 SSE worker_progress 推送（初始化 → 分发 → 完成）
+        - 动态质量评分（基于结果长度、结构化程度、关键词覆盖）
+        """
+        task_id = task["task_id"]
+        agent_id = task["assigned_agent"]
+        profile = self._participants.get(agent_id) or {}
+        agent_name = profile.get("name", agent_id)
+
+        # 推送进度：初始化
+        await self._emit(progress_callback, {
+            "type": "worker_progress",
+            "agent": agent_id,
+            "task_id": task_id,
+            "message": f"[{agent_name}] 正在初始化 AgentGraph...",
+        })
+
+        from src.multi_agent.orchestrator import get_agent_registry
+        reg = get_agent_registry()
+
+        # 推送进度：任务分发
+        await self._emit(progress_callback, {
+            "type": "worker_progress",
+            "agent": agent_id,
+            "task_id": task_id,
+            "message": f"[{agent_name}] 正在执行任务 \"{task['description'][:40]}...\"",
+        })
+
+        try:
+            dispatch_result = await reg.dispatch_task(
+                agent_id,
+                task["description"],
+                thread_id=task_id,
+                context=context,
+            )
+
+            if dispatch_result.get("status") == "ok":
+                raw_result = dispatch_result.get("result", "")
+                quality_score = self._evaluate_generic_quality(raw_result, task["description"])
+
+                await self._emit(progress_callback, {
+                    "type": "worker_progress",
+                    "agent": agent_id,
+                    "task_id": task_id,
+                    "message": f"[{agent_name}] 执行完成，质量评分: {quality_score:.1f}",
+                })
+
+                return {
+                    "task_id": task_id,
+                    "agent": agent_id,
+                    "result": raw_result,
+                    "confidence": 0.75,
+                    "quality_score": quality_score,
+                    "source": "generic_agent",
+                    "raw_data": raw_result,
+                }
+            else:
+                return {
+                    "task_id": task_id,
+                    "agent": agent_id,
+                    "result": f"[调度失败] {dispatch_result.get('message', '未知错误')}",
+                    "confidence": 0.0,
+                    "quality_score": 0.0,
+                    "source": "dispatch_error",
+                    "raw_data": dispatch_result.get("message", ""),
+                }
+
+        except Exception as e:
+            logger.error(f"[orchestrator] generic task {task_id} failed: {e}")
+            return {
+                "task_id": task_id,
+                "agent": agent_id,
+                "result": f"[执行异常] {str(e)}",
+                "confidence": 0.0,
+                "quality_score": 0.0,
+                "source": "generic_error",
+                "raw_data": str(e),
+            }
+
+    def _evaluate_generic_quality(self, result: str, original_task: str) -> float:
+        """
+        评估通用 Agent 结果质量（0-10 分）。
+        策略：结果长度 + 结构化程度 + 关键词覆盖 + 错误检测。
+        """
+        if not result or len(result) < 10:
+            return 2.0
+        if any(k in result for k in ["[执行失败]", "[调度失败]", "[异常]", "Error:", "Traceback"]):
+            return 3.0
+
+        score = 5.0
+        if len(result) > 200:
+            score += 1.0
+        if "```" in result or ("\n- " in result) or ("\n1." in result):
+            score += 1.5
+        task_words = set(original_task.lower().split())
+        result_words = set(result.lower().split())
+        overlap = len(task_words & result_words)
+        if overlap >= 3:
+            score += 1.5
+        if len(result) > 5000:
+            score -= 0.5
+
+        return min(max(score, 0.0), 10.0)
 
     async def _execute_coder_task(
         self,

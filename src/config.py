@@ -46,10 +46,10 @@ PDF_OCR_DPI: float = float(os.getenv("PDF_OCR_DPI", "150"))
 PDF_OCR_GPU: bool = os.getenv("PDF_OCR_GPU", "").lower() in ("1", "true", "yes")
 
 # ── User Profile ──────────────────────────────────────────────────────────────
-USER_NAME: str = "周暄"
+USER_NAME: str = "周轩"
 USER_TECH_STACK: list[str] = ["Python", "Rust", "FastAPI", "LangChain", "LangGraph"]
 USER_HARDWARE: str = "RTX 5060"
-USER_PROJECTS: list[str] = ["智程导航", "智眸千析", "火灾检测", "手语识别"]
+USER_PROJECTS: list[str] = ["人工智能", "深度学习", "计算机视觉", "自然语言处理"]
 
 # ── LangSmith ────────────────────────────────────────────────────────────────
 LANGSMITH_PROJECT: str = "deepseek-rag-agent"

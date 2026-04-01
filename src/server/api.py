@@ -75,6 +75,8 @@ from src.config import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
+_SHUTDOWN_TRACKER: dict = {"pending_tasks": 0, "max_pending": 0}
+
 # ── 全局 Token 追踪器 ──────────────────────────────────────────────────────────
 _token_tracker = TokenTracker(model=DEFAULT_MODEL)
 
@@ -962,6 +964,7 @@ async def upload_document(
 ) -> DocumentUploadResponse:
     """上传文档：提取文本、分块、注入 ChromaDB."""
     from src.document_processor import (
+        _log,
         chunk_text,
         detect_doc_type,
         extract_text,

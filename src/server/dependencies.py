@@ -26,6 +26,7 @@ from src.config import (
 )
 from src.memory.sqlite_store import get_sqlite_checkpointer, get_async_sqlite_checkpointer
 from src.graph import build_react_agent
+from src.graph.prompt import build_chief_coordinator_prompt
 
 # ── 全局 Agent 注册表（按 "provider/model" 缓存）──────────────────────────────
 _agent_registry: dict[str, Any] = {}
@@ -147,24 +148,11 @@ async def get_agent(model: Optional[str] = None) -> Any:
             streaming=True,
         )
         checkpointer = await _get_async_checkpointer()
-        system_prompt = (
-            f"你是一个专业的 AI 助手，用户名为「{USER_NAME}」。\n"
-            f"用户的技术栈: {', '.join(USER_TECH_STACK)}。\n"
-            f"用户的 GPU 硬件: {USER_HARDWARE}。\n"
-            f"用户的项目: {', '.join(USER_PROJECTS)}。\n"
-            "\n"
-            "## 工具使用（强制）\n"
-            "在收到用户每一轮新问题时，你必须先调用工具获取事实依据，禁止在未使用工具的情况下凭猜测作答。\n"
-            "优先组合使用多种工具：例如同时 memory_search + knowledge_base_search；需要时效信息时再加 web_search。\n"
-            "仅在工具结果返回后，再基于结果用中文给出简洁、结构化的最终回答。\n"
-            "\n"
-            "## 输出格式\n"
-            "使用 Markdown，但列表请用「顶格」或「最多一级」缩进：用 `- ` 开头，子项也用 `- ` 并尽量少缩进空格，"
-            "不要使用多层嵌套缩进列表，避免前端渲染成阶梯状。\n"
-            "需要分点时用 `1.` `2.` 有序列表或短段落小标题（###）。\n"
-            "\n"
-            "工具说明：web_search 联网检索；browse_page 抓取网页正文；memory_search 检索用户长期记忆；"
-            "knowledge_base_search 检索知识库文档；save_memory 保存重要事实；calculator 计算；process_image 图像相关。"
+        system_prompt = build_chief_coordinator_prompt(
+            user_name=USER_NAME,
+            tech_stack=USER_TECH_STACK,
+            hardware=USER_HARDWARE,
+            projects=USER_PROJECTS,
         )
         _agent_registry[key] = build_react_agent(
             llm,
