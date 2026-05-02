@@ -32,15 +32,7 @@
 | Tavily API Key | 可选 | 用于网页搜索工具 |
 | LangSmith API Key | 可选 | 用于链路追踪和监控 |
 
-### 为什么选择 Python 3.11？
 
-LangGraph 0.4+、LangChain 0.4+ 等核心依赖包对 Python 版本有明确要求：
-
-- `langgraph>=0.4.0` 推荐 Python 3.11+
-- `chromadb>=0.5.0` 在 Python 3.11 下性能最优
-- `langchain-deepseek>=0.1.0` 使用 Pydantic V2，需要 Python 3.9+，推荐 3.11+
-- Python 3.11 相比 3.10 有约 10-25% 的性能提升，对 AI 推理场景尤为重要
-- 不支持 Python 3.8 及以下版本
 
 ---
 
@@ -208,24 +200,7 @@ CHECKPOINT_PATH=./data/checkpointer/checkpoints.db
 
 ---
 
-## 配置说明
 
-| 配置项 | 必须 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `DEEPSEEK_API_KEY` | ✅ | - | DeepSeek API 密钥 |
-| `ANTHROPIC_API_KEY` | ❌ | 空 | Anthropic API 密钥（Claude 模型） |
-| `OPENAI_API_KEY` | ❌ | 空 | OpenAI API 密钥（GPT-4o 等） |
-| `OPENAI_BASE_URL` | ❌ | `https://api.openai.com/v1` | OpenAI 兼容端点（支持代理） |
-| `GOOGLE_API_KEY` | ❌ | 空 | Google API 密钥（Gemini 模型） |
-| `TAVILY_API_KEY` | ❌ | 空 | 网页搜索（可选） |
-| `LANGSMITH_API_KEY` | ❌ | 空 | 链路追踪（可选） |
-| `DEFAULT_MODEL` | ❌ | `deepseek-chat` | 模型名称 |
-| `TEMPERATURE` | ❌ | `0.7` | 生成温度（0-1） |
-| `MAX_TOKENS` | ❌ | `8000` | 最大输出 Token 数 |
-| `CHROMA_PATH` | ❌ | `./data/chroma_db` | ChromaDB 存储路径 |
-| `CHECKPOINT_PATH` | ❌ | `./data/checkpointer/checkpoints.db` | SQLite 状态持久化路径 |
-
----
 
 ## 运行项目
 
@@ -520,11 +495,8 @@ LangSmith 集成，实时追踪：
 
 #### 记忆系统 - ChromaDB 向量存储
 ![记忆系统](Demophoto/任务协调页面.png)
-ChromaDB 长期记忆存储，支持向量检索和语义相似度匹配
 
-#### 记忆系统 - SQLite 状态持久化
-![状态持久化](Demophoto/任务协调页面.png)
-SQLite Checkpointer 支持断电恢复和会话回溯
+
 
 #### 成本统计 - Token 使用追踪
 ![成本统计](Demophoto/成本报表页面.png)
